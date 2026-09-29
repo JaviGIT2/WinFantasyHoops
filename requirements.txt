@@ -1,0 +1,9 @@
+# Data pipeline (python -m pipeline.fetch / python -m pipeline.build)
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.5
+lightgbm>=4.5
+pytest>=8.0
