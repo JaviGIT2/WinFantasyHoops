@@ -10,7 +10,10 @@ export interface LeagueSettings {
   myTeam: number;
   formatId: string;
   cats: CatId[];
+  /** Categories given up: ignored in draft values and when ranking trades and pickups. */
   punts: CatId[];
+  /** Categories to build toward: count double when ranking trades and pickups. */
+  targets: CatId[];
   /** Per-category multipliers for the draft pool rankings (missing = ×1). */
   catWeights?: Partial<Record<CatId, number>>;
   slots: SlotCounts;
@@ -110,6 +113,7 @@ function defaultSettings(): LeagueSettings {
     formatId: '9cat',
     cats: FORMAT_PRESETS[0].cats,
     punts: [],
+    targets: [],
     catWeights: {},
     slots: DEFAULT_SLOTS,
     weeklyAdds: 4,

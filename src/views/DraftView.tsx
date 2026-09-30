@@ -104,7 +104,11 @@ export function DraftView() {
   }, [data, z, deferredQuery, posF, sortBy, poolMode, showTaken, ownerOf, cats, weightOf, projStrength]);
 
   const togglePunt = (c: CatId) =>
-    updateLeague({ punts: punts.includes(c) ? punts.filter((x) => x !== c) : [...punts, c] });
+    updateLeague({
+      punts: punts.includes(c) ? punts.filter((x) => x !== c) : [...punts, c],
+      // A punted category can't also be a target (League → Optimize my team).
+      targets: league.targets.filter((x) => x !== c),
+    });
 
   const doDraft = (id: string) => {
     draft(id, onClock);

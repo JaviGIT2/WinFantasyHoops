@@ -47,3 +47,9 @@ export function memo<T>(ctx: EngineCtx, key: string, fn: () => T): T {
 }
 
 export const eligOf = (ctx: EngineCtx, p: PlayerData): Pos[] => ctx.overrides[p.id]?.elig ?? p.elig;
+
+/** Out injured: marked out in the app, or listed out and not marked healthy. */
+export function isOut(ctx: EngineCtx, p: PlayerData): boolean {
+  const status = ctx.overrides[p.id]?.status;
+  return status === 'out' || (status !== 'healthy' && p.injury?.status === 'out');
+}

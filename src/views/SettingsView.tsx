@@ -20,7 +20,7 @@ export function SettingsView({ onDone }: { onDone: () => void }) {
 
   const setFormat = (id: string) => {
     const preset = FORMAT_PRESETS.find((f) => f.id === id);
-    update({ formatId: id, ...(preset ? { cats: preset.cats, punts: [] } : {}) });
+    update({ formatId: id, ...(preset ? { cats: preset.cats, punts: [], targets: [] } : {}) });
   };
   const toggleCat = (c: CatId) => {
     const cats = league.cats.includes(c) ? league.cats.filter((x) => x !== c) : [...league.cats, c];

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useApp } from '../AppContext';
+import { MovePicker, useRosterMove } from '../components/RosterMove';
 import { Icon, InjuryBadge, pct } from '../components/ui';
 import { POSITIONS, type Pos, type Role } from '../data/types';
 import { factorEffect, predictGame, statIndex } from '../engine/model';
@@ -27,11 +28,8 @@ function LineRow({ label, line, gp }: { label: string; line: StatLine; gp?: numb
 }
 
 export function PlayerSheet({ id, onClose }: { id: string; onClose: () => void }) {
-  const { ctx, data, today, ownerOf } = useApp();
-  const league = useLeague((l) => l.settings);
+  const { ctx, data, today } = useApp();
   const setOverride = useStore((s) => s.setOverride);
-  const addToRoster = useStore((s) => s.addToRoster);
-  const removeFromRoster = useStore((s) => s.removeFromRoster);
   const p = ctx.byId.get(id);
 
   useEffect(() => {
@@ -44,7 +42,6 @@ export function PlayerSheet({ id, onClose }: { id: string; onClose: () => void }
   const o = ctx.overrides[p.id] ?? {};
   const rates = playerRates(ctx, p);
   const proj = seasonProjection(ctx, p);
-  const owner = ownerOf.get(p.id);
   const start = today < data.meta.seasonStart ? data.meta.seasonStart : today;
   const upcoming = (ctx.sched.byTeam.get(p.team) ?? []).filter((g) => g.date >= start && g.date <= addDays(start, 13));
   const seasons: [string, SeasonLine | undefined][] = [
@@ -223,23 +220,43 @@ export function PlayerSheet({ id, onClose }: { id: string; onClose: () => void }
           </div>
         </div>
 
-        <div className="card row wrap">
-          <span className="secondary">{owner !== undefined ? `On ${league.teamNames[owner]}` : 'Free agent'}</span>
-          <span className="spacer" />
-          <select
-            value={owner ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === '') owner !== undefined && removeFromRoster(owner, p.id);
-              else addToRoster(Number(v), p.id);
-            }}
-            aria-label="Assign to team"
-          >
-            <option value="">Free agent</option>
-            {league.teamNames.map((n, i) => <option key={i} value={i}>{n}</option>)}
-          </select>
-        </div>
+        <RosterActions key={p.id} pid={p.id} />
       </div>
+    </div>
+  );
+}
+
+/** Where the player is, and moves under the league's rules: add a free agent, drop to waivers, or trade to another team. */
+function RosterActions({ pid }: { pid: string }) {
+  const { ownerOf } = useApp();
+  const teamNames = useLeague((l) => l.settings.teamNames);
+  const removeFromRoster = useStore((s) => s.removeFromRoster);
+  const { pending, start, cancel } = useRosterMove();
+  const owner = ownerOf.get(pid);
+  return (
+    <div className="card stack" style={{ gap: 10 }}>
+      <div className="row wrap">
+        <span className="secondary">{owner !== undefined ? `On ${teamNames[owner]}` : 'Free agent'}</span>
+        <span className="spacer" />
+        {owner !== undefined && (
+          <button
+            className="btn small"
+            onClick={() => {
+              cancel();
+              removeFromRoster(owner, pid);
+            }}
+          >
+            Drop to waivers
+          </button>
+        )}
+        <select value="" onChange={(e) => start(Number(e.target.value), pid)} aria-label={owner !== undefined ? 'Trade to team' : 'Add to team'}>
+          <option value="" disabled>
+            {owner !== undefined ? 'Trade to…' : 'Add to…'}
+          </option>
+          {teamNames.map((n, i) => (i === owner ? null : <option key={i} value={i}>{n}</option>))}
+        </select>
+      </div>
+      {pending && <MovePicker team={pending.team} pid={pid} onDone={cancel} onCancel={cancel} />}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CATEGORIES, FORMAT_PRESETS } from '../src/engine/categories';
 import { createContext } from '../src/engine/context';
 import { fitLinear, fitPoisson } from '../src/engine/glm';
-import { findTrades, leagueReport } from '../src/engine/league';
+import { findTrades, leagueReport, offersAway, offersFor, strategyWeights, type CatWeights } from '../src/engine/league';
 import { bestLineup, DEFAULT_SLOTS, expandSlots, hungarian, type Slot } from '../src/engine/lineup';
 import { catDist, catOdds, compareAggs, matchupOdds, projectWeek, valueWeights } from '../src/engine/matchup';
 import { gaussian, normCdf, rng } from '../src/engine/mathx';
@@ -301,6 +301,113 @@ describe('weekly projection, league and streaming', () => {
       expect(t.myDelta).toBeGreaterThan(0);
       expect(t.give.length).toBe(t.get.length);
     }
+  });
+
+  it('scores my moves by category strategy: targets count double, given-up categories not at all', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD'].map((t) => bundle.players.filter((p) => p.team === t));
+    const fa = bundle.players.filter((p) => p.team === 'EEE');
+    const weighted = (d: Record<string, number>, w: CatWeights) => cats.reduce((s, c) => s + (w[c] ?? 1) * d[c], 0);
+    for (const weights of [{}, strategyWeights(['PTS', 'REB'], ['AST', '3PM'])]) {
+      const { pickups } = findTrades(ctx, rosters, 0, fa, cats, 'last', { weights });
+      expect(pickups.length).toBeGreaterThan(0);
+      // A pickup leaves the other teams as they were, so its score is exactly the weighted sum of its category changes.
+      for (const t of pickups) expect(t.myDelta).toBeCloseTo(weighted(t.catDelta, weights), 9);
+    }
+  });
+
+  it('builds trade offers for one player', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD'].map((t) => bundle.players.filter((p) => p.team === t));
+    const target = rosters[2][3];
+    const { partner, offers } = offersFor(ctx, rosters, 0, target, cats, 'last');
+    expect(partner).toBe(2);
+    expect(offers.length).toBe(5);
+    const onTeam = (team: number) => (id: string) => rosters[team].some((p) => p.id === id);
+    for (const t of offers) {
+      expect(t.partner).toBe(2);
+      expect(t.get[0]).toBe(target.id);
+      expect(t.give.length).toBe(t.get.length);
+      expect(t.give.every(onTeam(0)) && t.get.every(onTeam(2))).toBe(true);
+      expect(t.fair).toBe(t.theirDelta > -0.1);
+      expect(Object.keys(t.catDelta)).toEqual(cats);
+    }
+    // Offers his team would take come first, best for both sides first, each asking for a different package of mine.
+    const firstTough = offers.findIndex((t) => !t.fair);
+    if (firstTough >= 0) expect(offers.slice(firstTough).every((t) => !t.fair)).toBe(true);
+    const score = (t: (typeof offers)[number]) => t.myDelta + 0.5 * t.theirDelta;
+    for (let i = 1; i < offers.length; i++) if (offers[i].fair === offers[i - 1].fair) expect(score(offers[i])).toBeLessThanOrEqual(score(offers[i - 1]));
+    expect(new Set(offers.map((t) => [...t.give].sort().join())).size).toBe(offers.length);
+    expect(offers.some((t) => t.give.length === 1)).toBe(true);
+
+    // A free agent gets the best drops instead, scored by the strategy; a player already on my team gets no offers.
+    const fa = bundle.players.find((p) => p.team === 'EEE')!;
+    const drops = offersFor(ctx, rosters, 0, fa, cats, 'last');
+    expect(drops.partner).toBe(-1);
+    expect(drops.offers.every((t) => t.get.join() === fa.id && t.give.length === 1 && onTeam(0)(t.give[0]))).toBe(true);
+    expect(drops.offers.map((t) => t.myDelta)).toEqual(drops.offers.map((t) => t.myDelta).sort((a, b) => b - a));
+    const ptsOnly = strategyWeights([], cats.filter((c) => c !== 'PTS'));
+    for (const t of offersFor(ctx, rosters, 0, fa, cats, 'last', { weights: ptsOnly }).offers) expect(t.myDelta).toBeCloseTo(t.catDelta.PTS, 9);
+    expect(offersFor(ctx, rosters, 0, rosters[0][0], cats, 'last')).toEqual({ partner: 0, offers: [] });
+  });
+
+  it('shops players of mine around the league', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE'].map((t) => bundle.players.filter((p) => p.team === t));
+    const onTeam = (team: number) => (id: string) => rosters[team].some((p) => p.id === id);
+    const score = (t: { myDelta: number; theirDelta: number }) => t.myDelta + 0.5 * t.theirDelta;
+    for (const k of [1, 2, 3]) {
+      const give = rosters[0].slice(2, 2 + k);
+      const offers = offersAway(ctx, rosters, 0, give, cats, 'last', { maxResults: 10 });
+      // One offer per other team, each sending exactly my picks for as many of theirs.
+      expect(offers.map((t) => t.partner).sort()).toEqual([1, 2, 3, 4]);
+      for (const t of offers) {
+        expect(t.give).toEqual(give.map((p) => p.id));
+        expect(t.get.length).toBe(k);
+        expect(t.get.every(onTeam(t.partner))).toBe(true);
+        expect(t.fair).toBe(t.theirDelta > -0.1);
+        expect(Object.keys(t.catDelta)).toEqual(cats);
+      }
+      for (let i = 1; i < offers.length; i++) {
+        expect(Number(offers[i].fair)).toBeLessThanOrEqual(Number(offers[i - 1].fair));
+        if (offers[i].fair === offers[i - 1].fair) expect(score(offers[i])).toBeLessThanOrEqual(score(offers[i - 1]));
+      }
+    }
+    expect(offersAway(ctx, rosters, 0, rosters[0].slice(0, 2), cats, 'last')).toHaveLength(4);
+    expect(offersAway(ctx, rosters, 0, [], cats, 'last')).toEqual([]);
+    expect(offersAway(ctx, rosters, 0, [rosters[1][0]], cats, 'last')).toEqual([]);
+
+    // Each team's offer is its best swap: cross-check with offersFor, which scores the same swaps from the other side.
+    const m = rosters[0][4];
+    const [first] = offersAway(ctx, rosters, 0, [m], cats, 'last');
+    const swaps = rosters[first.partner].map(
+      (p) => offersFor(ctx, rosters, 0, p, cats, 'last', { maxResults: 200 }).offers.find((t) => t.give.join() === m.id && t.get.length === 1)!,
+    );
+    const best = swaps.sort((a, b) => Number(b.fair) - Number(a.fair) || score(b) - score(a))[0];
+    expect(first.get).toEqual(best.get);
+    expect(first.myDelta).toBeCloseTo(best.myDelta, 12);
+  });
+
+  it('prefers the free agent who helps the targeted categories', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    // Two otherwise identical free agents: one rebounds, the other passes.
+    const template = bundle.players.find((p) => p.team === 'EEE' && p.pos === 'SF')!;
+    const s = template.last!;
+    const big = { ...template, id: 'fa-big', last: { ...s, oreb: s.oreb * 3, dreb: s.dreb * 3, reb: s.reb * 3, ast: s.ast / 3 } };
+    const passer = { ...template, id: 'fa-passer', last: { ...s, ast: s.ast * 3, oreb: s.oreb / 3, dreb: s.dreb / 3, reb: s.reb / 3 } };
+    bundle.players.push(big, passer);
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD'].map((t) => bundle.players.filter((p) => p.team === t));
+    const best = (weights: CatWeights) => findTrades(ctx, rosters, 0, [big, passer], cats, 'last', { weights }).pickups[0]?.get[0];
+    expect(best(strategyWeights(['REB'], ['AST']))).toBe('fa-big');
+    expect(best(strategyWeights(['AST'], ['REB']))).toBe('fa-passer');
   });
 
   it('streams the free agent whose team plays more games, within the add limit', () => {

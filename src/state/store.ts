@@ -26,9 +26,11 @@ export interface AppState extends SavedState {
   draft: (pid: string, team: number) => void;
   undoPick: () => void;
   resetDraft: () => void;
-  addToRoster: (team: number, pid: string) => void;
+  /** Sign a free agent to `team`, dropping `drop` from it to make room if given. */
+  addPlayer: (team: number, pid: string, drop?: string) => void;
+  /** 1-for-1 trade: `team` gets `get` from the team that has him and sends back `give`. */
+  tradePlayers: (team: number, get: string, give: string) => void;
   removeFromRoster: (team: number, pid: string) => void;
-  movePlayer: (pid: string, toTeam: number) => void;
   setOpponent: (week: number, team: number) => void;
   updateStream: (patch: Partial<StreamSettings>) => void;
   finishSetup: () => void;
@@ -146,11 +148,32 @@ export const useStore = create<AppState>()(
 
       resetDraft: () => set((s) => editOpen(s, (l) => ({ picks: [], rosters: emptyRosters(l.settings.teams) }))),
 
-      addToRoster: (team, pid) =>
+      addPlayer: (team, pid, drop) =>
         set((s) =>
-          editOpen(s, (l) => ({
-            rosters: l.rosters.map((r, i) => (i === team ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
-          })),
+          editOpen(s, (l) => {
+            // Only free agents; players on a roster move by trade.
+            if (l.rosters.some((r) => r.includes(pid))) return null;
+            if (drop !== undefined && !l.rosters[team]?.includes(drop)) return null;
+            return {
+              rosters: l.rosters.map((r, i) => (i === team ? [...r.filter((x) => x !== drop), pid] : r)),
+              stream: { ...l.stream, droppable: l.stream.droppable.filter((x) => x !== drop) },
+            };
+          }),
+        ),
+
+      tradePlayers: (team, get, give) =>
+        set((s) =>
+          editOpen(s, (l) => {
+            const partner = l.rosters.findIndex((r) => r.includes(get));
+            if (partner < 0 || partner === team || !l.rosters[team]?.includes(give)) return null;
+            // Each player takes the other's place in the roster order.
+            return {
+              rosters: l.rosters.map((r, i) =>
+                i === team ? r.map((x) => (x === give ? get : x)) : i === partner ? r.map((x) => (x === get ? give : x)) : r,
+              ),
+              stream: { ...l.stream, droppable: l.stream.droppable.filter((x) => x !== give) },
+            };
+          }),
         ),
 
       removeFromRoster: (team, pid) =>
@@ -158,13 +181,6 @@ export const useStore = create<AppState>()(
           editOpen(s, (l) => ({
             rosters: l.rosters.map((r, i) => (i === team ? r.filter((x) => x !== pid) : r)),
             stream: { ...l.stream, droppable: l.stream.droppable.filter((x) => x !== pid) },
-          })),
-        ),
-
-      movePlayer: (pid, toTeam) =>
-        set((s) =>
-          editOpen(s, (l) => ({
-            rosters: l.rosters.map((r, i) => (i === toTeam ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
           })),
         ),
 

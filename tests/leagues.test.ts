@@ -137,6 +137,47 @@ describe('league store', () => {
     expect(s.deleted).toEqual([second, first]);
   });
 
+  it('signs free agents, dropping someone when asked', () => {
+    const s = useStore.getState();
+    s.draft('a', 0);
+    s.draft('b', 0);
+    s.addPlayer(0, 'c');
+    expect(activeLeague(useStore.getState()).rosters[0]).toEqual(['a', 'b', 'c']);
+    useStore.getState().addPlayer(0, 'd', 'b');
+    expect(activeLeague(useStore.getState()).rosters[0]).toEqual(['a', 'c', 'd']);
+  });
+
+  it('won’t sign a player who is on a roster, or drop someone not on the team', () => {
+    const s = useStore.getState();
+    s.draft('a', 0);
+    s.draft('x', 1);
+    const before = activeLeague(useStore.getState()).rosters;
+    s.addPlayer(0, 'x');
+    s.addPlayer(0, 'y', 'x');
+    expect(activeLeague(useStore.getState()).rosters).toBe(before);
+  });
+
+  it('trades 1-for-1, each player taking the other’s place', () => {
+    const s = useStore.getState();
+    for (const [pid, team] of [['a', 0], ['b', 0], ['x', 1], ['y', 1]] as const) s.draft(pid, team);
+    s.updateStream({ droppable: ['b'] });
+    useStore.getState().tradePlayers(0, 'y', 'b');
+    const l = activeLeague(useStore.getState());
+    expect(l.rosters[0]).toEqual(['a', 'y']);
+    expect(l.rosters[1]).toEqual(['x', 'b']);
+    expect(l.stream.droppable).toEqual([]);
+  });
+
+  it('rejects trades that don’t involve a player from each team', () => {
+    const s = useStore.getState();
+    for (const [pid, team] of [['a', 0], ['b', 0], ['x', 1]] as const) s.draft(pid, team);
+    const before = activeLeague(useStore.getState()).rosters;
+    s.tradePlayers(0, 'b', 'a'); // same team
+    s.tradePlayers(0, 'x', 'z'); // z isn't on team 0
+    s.tradePlayers(0, 'fa', 'a'); // free agent: sign him instead
+    expect(activeLeague(useStore.getState()).rosters).toBe(before);
+  });
+
   it('keeps an untouched placeholder once a second league is created', () => {
     const placeholder = useStore.getState().activeId;
     useStore.getState().createLeague();
