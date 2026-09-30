@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppContext, type AppValue } from './AppContext';
+import { accountsEnabled } from './cloud/auth';
+import { useSyncStatus } from './cloud/sync';
 import { Icon } from './components/ui';
 import { loadBundle } from './data/loader';
 import type { DataBundle } from './data/types';
 import { createContext } from './engine/context';
 import { fantasyWeeks, localToday } from './engine/schedule';
-import { useStore } from './state/store';
+import { leagueName } from './state/leagues';
+import { useLeague, useStore } from './state/store';
 import { DraftView } from './views/DraftView';
 import { LeagueView } from './views/LeagueView';
 import { MatchupView } from './views/MatchupView';
@@ -30,7 +33,7 @@ const tabFromHash = (): TabId | null => {
 export function App() {
   const [data, setData] = useState<DataBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const setupDone = useStore((s) => s.setupDone);
+  const setupDone = useLeague((l) => l.setupDone);
   const [tab, setTab] = useState<TabId>(() => tabFromHash() ?? (setupDone ? 'draft' : 'settings'));
   const [sheet, setSheet] = useState<string | null>(null);
 
@@ -79,8 +82,8 @@ function Loaded({
 }) {
   const overrides = useStore((s) => s.overrides);
   const dateOverride = useStore((s) => s.dateOverride);
-  const rosters = useStore((s) => s.rosters);
-  const league = useStore((s) => s.league);
+  const rosters = useLeague((l) => l.rosters);
+  const leagueId = useLeague((l) => l.id);
   const today = dateOverride ?? localToday();
 
   const ctx = useMemo(() => createContext(data, overrides, today), [data, overrides, today]);
@@ -106,10 +109,9 @@ function Loaded({
         <header className="topbar">
           <div className="brand">
             <img src={`${import.meta.env.BASE_URL}icons/icon.svg`} alt="" />
-            <span>
-              Win Hoops <small className="hide-mobile">· {league.name}</small>
-            </span>
+            <span className="hide-mobile">Win Hoops</span>
           </div>
+          <LeagueSwitcher onNew={() => go('settings')} />
           <nav className="tabs" aria-label="Sections">
             {TABS.map((t) => (
               <button key={t.id} className="tab" aria-current={tab === t.id ? 'page' : undefined} onClick={() => go(t.id)}>
@@ -119,11 +121,13 @@ function Loaded({
             ))}
           </nav>
           <span className="spacer" />
+          <SyncFlag />
           <span className="small muted hide-narrow">
             {data.meta.curLabel} · data {data.meta.dataThrough ? `through ${data.meta.dataThrough}` : `as of ${new Date(data.meta.generatedAt).toLocaleDateString()}`}
           </span>
         </header>
-        <main>
+        {/* Keyed by league so each view starts fresh (selected team, filters…) after switching leagues. */}
+        <main key={leagueId}>
           {tab === 'draft' && <DraftView />}
           {tab === 'matchup' && <MatchupView />}
           {tab === 'league' && <LeagueView />}
@@ -134,4 +138,42 @@ function Loaded({
       {sheet && <PlayerSheet id={sheet} onClose={() => setSheet(null)} />}
     </AppContext.Provider>
   );
+}
+
+const NEW_LEAGUE = 'new';
+
+function LeagueSwitcher({ onNew }: { onNew: () => void }) {
+  const leagues = useStore((s) => s.leagues);
+  const activeId = useLeague((l) => l.id);
+  const switchLeague = useStore((s) => s.switchLeague);
+  const createLeague = useStore((s) => s.createLeague);
+  return (
+    <select
+      className="league-switch"
+      aria-label="League"
+      value={activeId}
+      onChange={(e) => {
+        if (e.target.value !== NEW_LEAGUE) return switchLeague(e.target.value);
+        createLeague();
+        onNew();
+      }}
+    >
+      {leagues.map((l) => (
+        <option key={l.id} value={l.id}>
+          {leagueName(l)}
+        </option>
+      ))}
+      <option value={NEW_LEAGUE}>New league…</option>
+    </select>
+  );
+}
+
+/** Flags edits that aren't reaching the account (offline or failing); silent otherwise. */
+function SyncFlag() {
+  const phase = useSyncStatus((s) => s.phase);
+  if (!accountsEnabled) return null;
+  if (phase === 'offline')
+    return <span className="badge sync-flag" title="Changes are saved on this device and sync when you're back online">Offline</span>;
+  if (phase === 'error') return <span className="badge out" title="Changes are saved on this device. See Settings → Account.">Not synced</span>;
+  return null;
 }

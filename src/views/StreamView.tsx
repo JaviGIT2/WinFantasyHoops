@@ -7,14 +7,14 @@ import { lineValue, valueWeights } from '../engine/matchup';
 import { playerWeekAgg } from '../engine/league';
 import { dayName, shortDate, weekFor } from '../engine/schedule';
 import { planStreams, type StreamPlan } from '../engine/streaming';
-import { useStore } from '../state/store';
+import { useLeague, useStore } from '../state/store';
 
 export function StreamView() {
   const { data, ctx, weeks, today, rosterOf, freeAgents } = useApp();
-  const league = useStore((s) => s.league);
-  const stream = useStore((s) => s.stream);
+  const league = useLeague((l) => l.settings);
+  const stream = useLeague((l) => l.stream);
   const updateStream = useStore((s) => s.updateStream);
-  const opponents = useStore((s) => s.opponents);
+  const opponents = useLeague((l) => l.opponents);
   const week = weekFor(weeks, today);
   const weekNo = week?.week ?? 1;
   const mine = useMemo(() => rosterOf(league.myTeam), [rosterOf, league.myTeam]);

@@ -6,7 +6,7 @@ import { factorEffect, predictGame, statIndex } from '../engine/model';
 import { availability, playerRates, seasonProjection } from '../engine/projection';
 import { addDays, dayName, shortDate } from '../engine/schedule';
 import { perGame, type SeasonLine, type StatLine } from '../engine/stats';
-import { useStore } from '../state/store';
+import { useLeague, useStore } from '../state/store';
 
 const COLS = [
   ['min', 'MIN'], ['pts', 'PTS'], ['reb', 'REB'], ['ast', 'AST'], ['stl', 'STL'], ['blk', 'BLK'], ['tpm', '3PM'], ['to', 'TO'],
@@ -28,7 +28,7 @@ function LineRow({ label, line, gp }: { label: string; line: StatLine; gp?: numb
 
 export function PlayerSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const { ctx, data, today, ownerOf } = useApp();
-  const league = useStore((s) => s.league);
+  const league = useLeague((l) => l.settings);
   const setOverride = useStore((s) => s.setOverride);
   const addToRoster = useStore((s) => s.addToRoster);
   const removeFromRoster = useStore((s) => s.removeFromRoster);

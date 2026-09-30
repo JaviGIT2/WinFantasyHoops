@@ -9,7 +9,7 @@ import { rosterSize } from '../engine/lineup';
 import { seasonProjection } from '../engine/projection';
 import { perGame, sumLines, type StatLine } from '../engine/stats';
 import { computeZ, teamStrength, weightedValue, type ZResult } from '../engine/zscore';
-import { snakeTeam, useStore } from '../state/store';
+import { snakeTeam, useLeague, useStore } from '../state/store';
 
 type Mode = 'avg' | 'tot';
 type Season = 'last' | 'proj';
@@ -41,8 +41,8 @@ function rawCell(c: CatId, line: StatLine, mode: Mode): string {
 
 export function DraftView() {
   const { data, ctx, ownerOf } = useApp();
-  const league = useStore((s) => s.league);
-  const picks = useStore((s) => s.picks);
+  const league = useLeague((l) => l.settings);
+  const picks = useLeague((l) => l.picks);
   const draft = useStore((s) => s.draft);
   const undoPick = useStore((s) => s.undoPick);
   const resetDraft = useStore((s) => s.resetDraft);
@@ -57,7 +57,7 @@ export function DraftView() {
   const poolSize = league.teams * size;
   const totalPicks = poolSize;
   const onClock = league.trackAllTeams ? snakeTeam(picks.length, league.teams) : league.myTeam;
-  const storedIds = useStore((s) => s.rosters[league.myTeam] ?? EMPTY);
+  const storedIds = useLeague((l) => l.rosters[league.myTeam] ?? EMPTY);
   // Ignore ids that are no longer in the data bundle (e.g. a player waived since the draft).
   const myIds = useMemo(() => storedIds.filter((id) => ctx.byId.has(id)), [storedIds, ctx]);
   // Tracking only your own team, the draft ends when your roster is full.

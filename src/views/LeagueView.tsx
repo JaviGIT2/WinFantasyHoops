@@ -5,7 +5,7 @@ import { searchKey } from '../data/loader';
 import type { PlayerData } from '../data/types';
 import { findTrades, leagueReport, type TradeIdea } from '../engine/league';
 import type { Basis } from '../engine/projection';
-import { useStore } from '../state/store';
+import { useLeague, useStore } from '../state/store';
 
 /** Rank cell color: top of the league blue, bottom red, middle neutral. */
 function rankStyle(rank: number, n: number): React.CSSProperties {
@@ -17,8 +17,8 @@ function rankStyle(rank: number, n: number): React.CSSProperties {
 
 export function LeagueView() {
   const { data, ctx, rosterOf, freeAgents, ownerOf } = useApp();
-  const league = useStore((s) => s.league);
-  const rosters = useStore((s) => s.rosters);
+  const league = useLeague((l) => l.settings);
+  const rosters = useLeague((l) => l.rosters);
   const [basis, setBasis] = useState<Basis>(data.meta.curGames > 0 ? 'cur' : 'proj');
   const teamRosters = useMemo(() => rosters.map((_, i) => rosterOf(i)), [rosters, rosterOf]);
   const filled = teamRosters.filter((r) => r.length > 0).length;
@@ -151,7 +151,7 @@ function TradeList({
   kind: 'target' | 'trade' | 'pickup';
 }) {
   const { ctx } = useApp();
-  const league = useStore((s) => s.league);
+  const league = useLeague((l) => l.settings);
   const [limit, setLimit] = useState(6);
   const players = (ids: string[]) => ids.map((id) => ctx.byId.get(id)).filter((p): p is PlayerData => !!p);
   const owner = (p: PlayerData) => (ownerOf.has(p.id) ? league.teamNames[ownerOf.get(p.id)!] : 'FA');
@@ -212,7 +212,7 @@ function TradeList({
 
 function RosterEditor() {
   const { data, rosterOf, ownerOf } = useApp();
-  const league = useStore((s) => s.league);
+  const league = useLeague((l) => l.settings);
   const addToRoster = useStore((s) => s.addToRoster);
   const removeFromRoster = useStore((s) => s.removeFromRoster);
   const [team, setTeam] = useState(league.myTeam);

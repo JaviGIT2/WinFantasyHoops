@@ -17,6 +17,7 @@
     "icons": "tsx scripts/make-icons.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zustand": "^5.0.15"

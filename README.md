@@ -4,8 +4,12 @@ Expected-victory tools for Yahoo-style head-to-head **category** fantasy basketb
 (9-cat, 8-cat, 7-cat, 5-cat, 11-cat or any custom set). It has two parts:
 
 - **The app** (React + TypeScript) runs in the browser on desktop and phones and
-  installs to a home screen as an app (PWA). All projections run on the device;
-  there is no server.
+  installs to a home screen as an app (PWA). All projections run on the device.
+  Keep as many leagues as you like, each with its own settings, draft, rosters and
+  streaming plan; switch between them from the top bar.
+- **Accounts** (optional, [Supabase](https://supabase.com)): sign in with email and
+  password and your leagues follow you between phone and desktop. Without it the app
+  needs no server and saves leagues on each device.
 - **The data pipeline** (Python: pandas, scikit-learn, LightGBM) downloads NBA data,
   trains the projection model, and writes the bundle the app loads.
 
@@ -15,7 +19,7 @@ Expected-victory tools for Yahoo-style head-to-head **category** fantasy basketb
 | **Matchup** | Pick a week and opponent. Every scheduled game is projected by the ML model, lineup limits are applied day by day, and it shows win probability per category and overall plus the expected category record. Tap a player to see the game-by-game matchup factors. |
 | **League** | Every team's projected strength (expected categories won per week against the league, win %, category ranks). It also finds trade targets, 1-for-1 and 2-for-2 trades that help you without gutting the other team, and waiver pickups. The stat basis is switchable: current-season averages (falling back to last season until a player has 5 games), the blended projection, or last season. |
 | **Stream** | Plans this week's add/drops within your remaining adds. It either chases chosen categories or maximizes your chance of beating this week's opponent, respects "next-day" add rules, and only counts games where an open lineup slot exists. |
-| **Settings** | League format, roster slots, weekly add limit, team names, a planning date, and the model's accuracy report. |
+| **Settings** | Your leagues (add, open, delete), then the open league's format, roster slots, weekly add limit and team names, a planning date, the model's accuracy report, and your account. |
 
 ## Quick start
 
@@ -26,6 +30,40 @@ npm run dev          # http://localhost:5173
 
 The repository ships with a built data bundle in `public/data/bundle.json`, so the
 app works immediately. You only need Python to refresh the data.
+
+## Accounts
+
+Without setup the app has no sign-in and keeps leagues in the browser on each
+device. To add accounts, connect a Supabase project (the free tier is plenty):
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. Open **SQL Editor**, paste [`supabase/schema.sql`](supabase/schema.sql) and run it. It
+   creates the `leagues` and `user_prefs` tables with row-level security, so each
+   account can only read and change its own rows.
+3. Under **Authentication → URL Configuration**, set **Site URL** to where the app is
+   hosted and add `http://localhost:5173` (plus the hosted URL) to **Redirect URLs**.
+   Email links (confirm address, reset password) return there.
+4. Copy `.env.example` to `.env.local` and fill in the project URL and publishable key
+   from **Project Settings → API** (the legacy anon key also works). Restart
+   `npm run dev`.
+
+How it behaves:
+
+- **Existing data.** The first time you sign in on a device that already has leagues
+  saved from before accounts, they're added to your account.
+- **What's shared.** Each league syncs as a whole: settings, draft, rosters, weekly
+  opponents and streaming plan. Player adjustments (minutes, injury status,
+  positions) and the planning date belong to the account and apply to every league.
+- **Offline.** The app keeps working and saves edits on the device; they sync when
+  the connection returns (the top bar says **Offline** meanwhile). If two devices
+  edit the same league while apart, the later edit wins; player adjustments from
+  both are kept.
+- **Signing out** removes the account's leagues from that device; they stay in the
+  account.
+- **Email.** Supabase asks new accounts to confirm their email address, and its
+  built-in mailer only sends a few emails per hour. That's fine for you and a few
+  friends; for more, add your own SMTP server (**Authentication → Emails**) or turn
+  off **Confirm email** (**Authentication → Sign In / Providers → Email**).
 
 ## Data
 
@@ -120,8 +158,12 @@ URLs, hash routing). Drop it on Netlify, Vercel, Cloudflare Pages, GitHub Pages 
 any web server. Open the URL on a phone and choose **Add to Home Screen** to install
 it; it works offline after the first visit.
 
-League settings, draft and rosters are stored in the browser on each device
-(localStorage). They don't sync between devices.
+For accounts, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in the
+build environment (e.g. your host's environment variables); they're compiled into
+the site. Both are meant to be public: row-level security, not the key, keeps each
+account's data private. Add the site's URL to Supabase's redirect URLs (step 3
+above). Without them, the build runs without accounts and each device keeps its own
+leagues in the browser (localStorage).
 
 ## Known limits
 
@@ -152,9 +194,12 @@ pipeline/           Python data pipeline
   build.py          holdout test, final training, app bundle
   tests/            pytest: parsers (trimmed real pages), leakage, models
 src/engine/         app engine (TypeScript): projection, model, lineup, matchup, league, streaming, z-scores
-src/views/          Draft, Matchup, League, Stream, Settings, PlayerSheet
+src/state/          leagues (format, migration, merging the account's copy) and the app store
+src/cloud/          Supabase client, sign-in, sync
+src/views/          Draft, Matchup, League, Stream, Settings, PlayerSheet, sign-in
+supabase/schema.sql tables and row-level security for accounts
 public/data/        bundle.json (players, schedule, team defense tables, model)
-tests/              engine tests (vitest), incl. LightGBM tree parity
+tests/              engine tests (vitest), incl. LightGBM tree parity; league store and sync merge
 scripts/py.mjs      runs the pipeline with .venv's Python from npm scripts
 ```
 

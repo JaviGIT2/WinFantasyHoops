@@ -6,7 +6,7 @@ import { expandSlots } from '../engine/lineup';
 import { compareAggs, projectWeek, valueWeights, type TeamWeek } from '../engine/matchup';
 import { factorEffect, statIndex } from '../engine/model';
 import { dayName, shortDate, weekFor } from '../engine/schedule';
-import { useStore } from '../state/store';
+import { useLeague, useStore } from '../state/store';
 
 const signedPct = (x: number) => (Math.abs(x) < 0.5 ? '±0%' : `${x > 0 ? '+' : ''}${x.toFixed(0)}%`);
 
@@ -15,8 +15,8 @@ const LABEL: Record<(typeof SHOW)[number], string> = { pts: 'PTS', reb: 'REB', a
 
 export function MatchupView() {
   const { data, ctx, weeks, today, rosterOf } = useApp();
-  const league = useStore((s) => s.league);
-  const opponents = useStore((s) => s.opponents);
+  const league = useLeague((l) => l.settings);
+  const opponents = useLeague((l) => l.opponents);
   const setOpponent = useStore((s) => s.setOpponent);
   const current = weekFor(weeks, today);
   const [weekNo, setWeekNo] = useState(current?.week ?? 1);

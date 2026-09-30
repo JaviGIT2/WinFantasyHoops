@@ -148,7 +148,7 @@ main { flex: 1; width: 100%; max-width: 1280px; margin: 0 auto; padding: 16px; p
 .btn.ghost:hover { background: var(--surface-2); }
 .icon-btn { border: 0; background: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--ink-2); display: inline-flex; }
 .icon-btn:hover { background: var(--surface-2); }
-input[type='text'], input[type='number'], input[type='search'], input[type='date'], select {
+input[type='text'], input[type='number'], input[type='search'], input[type='date'], input[type='email'], input[type='password'], select {
   border: 1px solid var(--border-strong); background: var(--surface); border-radius: 8px;
   padding: 6px 10px; min-height: 34px; min-width: 0;
 }
@@ -267,7 +267,30 @@ td.z { font-size: 12px; border-radius: 0; }
 .move { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--grid); }
 .move:last-child { border-bottom: 0; }
 .notice { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); font-size: 13px; }
+.notice.error { background: rgba(208, 59, 59, 0.1); color: var(--crit); }
 .loading { min-height: 100dvh; display: grid; place-items: center; color: var(--muted); }
+
+/* ------------------------------------------------------------ accounts and leagues */
+.auth-page {
+  min-height: 100dvh; display: grid; place-items: center;
+  padding: calc(env(safe-area-inset-top) + 24px) 16px calc(env(safe-area-inset-bottom) + 24px);
+}
+.auth-card { width: min(400px, 100%); padding: 20px; gap: 14px; }
+.auth-card input { width: 100%; }
+.auth-brand { display: flex; align-items: center; gap: 12px; }
+.auth-brand img { width: 40px; height: 40px; flex: none; }
+.auth-brand h1 { font-size: 18px; font-weight: 700; }
+.auth-brand p { margin: 2px 0 0; }
+.btn.block { width: 100%; justify-content: center; }
+.textlink { border: 0; background: none; padding: 2px 0; cursor: pointer; color: var(--mine); font-weight: 550; font-size: 13px; align-self: center; }
+.textlink:hover { text-decoration: underline; }
+.league-switch { max-width: min(220px, 46vw); font-weight: 600; text-overflow: ellipsis; }
+.sync-flag { background: var(--surface-2); color: var(--ink-2); }
+.league-list { display: flex; flex-direction: column; }
+.league-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--grid); }
+.league-item:last-child { border-bottom: 0; }
+.league-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.league-meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* draft layout: radars sticky on the right on desktop, side by side mid-width, toggled on phones */
 .radar-pair { display: grid; gap: 12px; grid-template-columns: 1fr; }

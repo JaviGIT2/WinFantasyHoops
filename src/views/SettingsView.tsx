@@ -1,18 +1,22 @@
+import { useState } from 'react';
 import { useApp } from '../AppContext';
+import { accountsEnabled, dismissNotice, signOut, useAuth } from '../cloud/auth';
+import { useSyncStatus } from '../cloud/sync';
 import { ALL_CATS, CATEGORIES, FORMAT_PRESETS, type CatId } from '../engine/categories';
 import { ACTIVE_SLOTS, rosterSize, type SlotCounts } from '../engine/lineup';
 import { MODEL_STATS } from '../engine/stats';
-import { useStore } from '../state/store';
+import { leagueName, type League } from '../state/leagues';
+import { useLeague, useStore } from '../state/store';
 
 export function SettingsView({ onDone }: { onDone: () => void }) {
   const { data } = useApp();
-  const league = useStore((s) => s.league);
+  const league = useLeague((l) => l.settings);
   const update = useStore((s) => s.updateLeague);
-  const setupDone = useStore((s) => s.setupDone);
+  const setupDone = useLeague((l) => l.setupDone);
   const finishSetup = useStore((s) => s.finishSetup);
   const dateOverride = useStore((s) => s.dateOverride);
   const setDateOverride = useStore((s) => s.setDateOverride);
-  const picks = useStore((s) => s.picks);
+  const picks = useLeague((l) => l.picks);
 
   const setFormat = (id: string) => {
     const preset = FORMAT_PRESETS.find((f) => f.id === id);
@@ -26,17 +30,20 @@ export function SettingsView({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="stack" style={{ maxWidth: 860, margin: '0 auto' }}>
+      <LeaguesCard />
+
       {!setupDone && (
         <div className="card" style={{ borderColor: 'var(--mine)' }}>
-          <h2>Welcome</h2>
+          <h2>Set up {league.name.trim() || 'this league'}</h2>
           <p className="secondary" style={{ marginBottom: 0 }}>
-            Set up your league the way it's configured on Yahoo, then head to the draft. Everything is saved on this device.
+            Enter the league the way it's configured on Yahoo, then head to the draft.{' '}
+            {accountsEnabled ? 'It’s saved to your account, so it follows you to every device.' : 'Everything is saved on this device.'}
           </p>
         </div>
       )}
 
       <div className="card stack">
-        <h2>League</h2>
+        <h2>League settings</h2>
         <div className="grid two">
           <label className="field">
             League name
@@ -139,24 +146,128 @@ export function SettingsView({ onDone }: { onDone: () => void }) {
 
       <ModelCard />
 
-      <div className="card row wrap">
-        <div>
-          <h2>Reset</h2>
-          <p className="small secondary" style={{ margin: 0 }}>Clears league settings, draft, rosters and overrides on this device.</p>
+      {accountsEnabled ? (
+        <AccountCard />
+      ) : (
+        <div className="card row wrap">
+          <div>
+            <h2>Reset</h2>
+            <p className="small secondary" style={{ margin: 0 }}>Clears every league, draft, roster and player override on this device.</p>
+          </div>
+          <span className="spacer" />
+          <button
+            className="btn"
+            onClick={() => {
+              if (confirm('Erase all league data on this device?')) {
+                useStore.persist.clearStorage();
+                location.reload();
+              }
+            }}
+          >
+            Erase everything
+          </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+function leagueSummary(l: League) {
+  const { teams, formatId, cats } = l.settings;
+  const format = FORMAT_PRESETS.find((f) => f.id === formatId)?.label ?? `${cats.length}-cat custom`;
+  const status = l.picks.length ? `${l.picks.length} picks` : l.setupDone ? 'not drafted yet' : 'not set up yet';
+  return `${teams} teams · ${format} · ${status}`;
+}
+
+function LeaguesCard() {
+  const leagues = useStore((s) => s.leagues);
+  const activeId = useLeague((l) => l.id);
+  const switchLeague = useStore((s) => s.switchLeague);
+  const createLeague = useStore((s) => s.createLeague);
+  const deleteLeague = useStore((s) => s.deleteLeague);
+  const notice = useAuth((a) => a.notice);
+
+  const remove = (l: League) => {
+    const where = accountsEnabled ? 'from your account and every device' : 'from this device';
+    if (confirm(`Delete “${leagueName(l)}”? Its settings, draft and rosters will be removed ${where}.`)) deleteLeague(l.id);
+  };
+
+  return (
+    <div className="card stack">
+      <div className="row">
+        <h2>Your leagues</h2>
         <span className="spacer" />
-        <button
-          className="btn"
-          onClick={() => {
-            if (confirm('Erase all league data on this device?')) {
-              useStore.persist.clearStorage();
-              location.reload();
-            }
-          }}
-        >
-          Erase everything
-        </button>
+        <button className="btn small" onClick={createLeague}>New league</button>
       </div>
+      {notice && (
+        <div className="notice row">
+          <span style={{ flex: 1 }}>{notice}</span>
+          <button className="btn small ghost" onClick={dismissNotice}>Dismiss</button>
+        </div>
+      )}
+      <div className="league-list">
+        {leagues.map((l) => (
+          <div key={l.id} className="league-item" aria-current={l.id === activeId ? 'true' : undefined}>
+            <div className="league-meta">
+              <b>{leagueName(l)}</b>
+              <span className="small muted">{leagueSummary(l)}</span>
+            </div>
+            {l.id === activeId ? (
+              <span className="badge mine">Current</span>
+            ) : (
+              <button className="btn small" onClick={() => switchLeague(l.id)}>Open</button>
+            )}
+            <button className="btn small ghost" onClick={() => remove(l)} aria-label={`Delete ${leagueName(l)}`}>Delete</button>
+          </div>
+        ))}
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>
+        Each league keeps its own settings, draft, rosters and streaming plan. Player adjustments (minutes, injuries, positions) and the planning
+        date apply to all of them.
+      </p>
+    </div>
+  );
+}
+
+function AccountCard() {
+  const account = useAuth((a) => a.account);
+  const sync = useSyncStatus();
+  const [busy, setBusy] = useState(false);
+
+  const status =
+    sync.phase === 'offline'
+      ? 'Offline. Changes are saved on this device and sync when you’re back online.'
+      : sync.phase === 'error'
+        ? `Couldn’t sync: ${sync.error}. Changes are saved on this device; it will keep retrying.`
+        : sync.phase === 'syncing'
+          ? 'Syncing…'
+          : sync.lastSynced
+            ? 'All changes saved to your account.'
+            : 'Connecting…';
+
+  return (
+    <div className="card row wrap">
+      <div style={{ minWidth: 0 }}>
+        <h2>Account</h2>
+        <p className="small secondary" style={{ margin: '4px 0 0' }}>
+          Signed in as <b>{account?.email}</b>
+        </p>
+        <p className={`small ${sync.phase === 'error' ? 'delta-down' : 'muted'}`} style={{ margin: '2px 0 0' }} role="status">
+          {status}
+        </p>
+      </div>
+      <span className="spacer" />
+      <button
+        className="btn"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await signOut();
+          setBusy(false);
+        }}
+      >
+        {busy ? 'Signing out…' : 'Sign out'}
+      </button>
     </div>
   );
 }

@@ -1,49 +1,27 @@
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
-import { FORMAT_PRESETS, type CatId } from '../engine/categories';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import type { PlayerOverride } from '../engine/context';
-import { DEFAULT_SLOTS, type SlotCounts } from '../engine/lineup';
+import {
+  emptyRosters,
+  hasContent,
+  isPlaceholder,
+  mergeRemote,
+  migrateV1,
+  newLeague,
+  normalizeSaved,
+  stamp,
+  type League,
+  type LeagueDoc,
+  type LeagueSettings,
+  type Remote,
+  type SavedState,
+  type StreamSettings,
+} from './leagues';
 
-export interface LeagueSettings {
-  name: string;
-  teams: number;
-  teamNames: string[];
-  /** Index of the user's team (also their draft slot − 1). */
-  myTeam: number;
-  formatId: string;
-  cats: CatId[];
-  punts: CatId[];
-  /** Per-category multipliers for the draft pool rankings (missing = ×1). */
-  catWeights?: Partial<Record<CatId, number>>;
-  slots: SlotCounts;
-  weeklyAdds: number;
-  addTiming: 'same' | 'next';
-  /** Record every pick (all teams) instead of only your own. */
-  trackAllTeams: boolean;
-}
+export type { League, LeagueSettings, StreamSettings } from './leagues';
 
-export interface StreamSettings {
-  mode: 'chase' | 'win';
-  chase: CatId[];
-  droppable: string[];
-  /** Adds already used, per fantasy week. */
-  addsUsed: Record<number, number>;
-}
-
-export interface AppState {
-  league: LeagueSettings;
-  /** Draft picks in order. */
-  picks: { pid: string; team: number }[];
-  /** Current rosters (player ids) per team; the draft writes here, later edits too. */
-  rosters: string[][];
-  overrides: Record<string, PlayerOverride>;
-  /** Weekly opponent (team index) per fantasy week. */
-  opponents: Record<number, number>;
-  stream: StreamSettings;
-  /** Optional "today" for planning ahead (e.g. before the season starts). */
-  dateOverride: string | null;
-  setupDone: boolean;
-
+export interface AppState extends SavedState {
+  // The open league
   updateLeague: (patch: Partial<LeagueSettings>) => void;
   draft: (pid: string, team: number) => void;
   undoPick: () => void;
@@ -51,98 +29,148 @@ export interface AppState {
   addToRoster: (team: number, pid: string) => void;
   removeFromRoster: (team: number, pid: string) => void;
   movePlayer: (pid: string, toTeam: number) => void;
-  setOverride: (pid: string, patch: PlayerOverride | null) => void;
   setOpponent: (week: number, team: number) => void;
   updateStream: (patch: Partial<StreamSettings>) => void;
-  setDateOverride: (d: string | null) => void;
   finishSetup: () => void;
+
+  // Shared by all leagues
+  setOverride: (pid: string, patch: PlayerOverride | null) => void;
+  setDateOverride: (d: string | null) => void;
+
+  // League list
+  createLeague: () => string;
+  switchLeague: (id: string) => void;
+  deleteLeague: (id: string) => void;
+
+  // Sync bookkeeping (doesn't count as an edit)
+  applyRemote: (remote: Remote) => void;
+  markSynced: (pushed: { leagues: Record<string, string>; deleted: string[]; prefs?: string }) => void;
 }
 
-const defaultNames = (n: number, mine: number) =>
-  Array.from({ length: n }, (_, i) => (i === mine ? 'My Team' : `Team ${i + 1}`));
+/** Storage key without accounts; also where the app kept its single league before accounts existed. */
+export const DEVICE_KEY = 'win-fantasy-hoops';
+export const accountKey = (userId: string) => `${DEVICE_KEY}@${userId}`;
 
-const initialLeague: LeagueSettings = {
-  name: 'My League',
-  teams: 12,
-  teamNames: defaultNames(12, 0),
-  myTeam: 0,
-  formatId: '9cat',
-  cats: FORMAT_PRESETS[0].cats,
-  punts: [],
-  catWeights: {},
-  slots: DEFAULT_SLOTS,
-  weeklyAdds: 4,
-  addTiming: 'next',
-  trackAllTeams: true,
+let memory: StateStorage | null = null;
+
+/** localStorage, or sessionStorage / memory where it's blocked (private modes, tests). */
+function browserStorage(): StateStorage {
+  for (const get of [() => localStorage, () => sessionStorage]) {
+    try {
+      const s = get();
+      s.getItem(DEVICE_KEY);
+      return s;
+    } catch {
+      // blocked or missing: try the next one
+    }
+  }
+  if (!memory) {
+    const m = new Map<string, string>();
+    memory = { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k) };
+  }
+  return memory;
+}
+
+// Nothing is read or written until openStore picks the key (device, or which account), so a stray write can't clobber
+// another account's leagues.
+let backing: StateStorage | null = null;
+const deferred: StateStorage = {
+  getItem: (k) => backing?.getItem(k) ?? null,
+  setItem: (k, v) => backing?.setItem(k, v),
+  removeItem: (k) => backing?.removeItem(k),
 };
 
-const emptyRosters = (n: number) => Array.from({ length: n }, () => [] as string[]);
+function initialState(): SavedState {
+  const league = newLeague();
+  return { leagues: [league], activeId: league.id, deleted: [], overrides: {}, dateOverride: null };
+}
+
+export const activeLeague = (s: SavedState): League => s.leagues.find((l) => l.id === s.activeId) ?? s.leagues[0];
+
+/** Apply `edit` to the open league and stamp it for syncing; `edit` returns null for "no change". */
+function editOpen(s: SavedState, edit: (l: League) => Partial<LeagueDoc> | null): Partial<SavedState> | SavedState {
+  const open = activeLeague(s);
+  const patch = edit(open);
+  if (!patch) return s;
+  return { leagues: s.leagues.map((l) => (l === open ? { ...l, ...patch, updatedAt: stamp(l.updatedAt, l.syncedAt) } : l)) };
+}
+
+const prefsStamp = (s: SavedState) => stamp(s.prefsUpdatedAt, s.prefsSyncedAt);
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
-      league: initialLeague,
-      picks: [],
-      rosters: emptyRosters(12),
-      overrides: {},
-      opponents: {},
-      stream: { mode: 'win', chase: ['BLK', 'STL'], droppable: [], addsUsed: {} },
-      dateOverride: null,
-      setupDone: false,
+    (set, get) => ({
+      ...initialState(),
 
       updateLeague: (patch) =>
-        set((s) => {
-          const league = { ...s.league, ...patch };
-          let rosters = s.rosters;
-          if (patch.teams !== undefined && patch.teams !== s.league.teams) {
-            const n = patch.teams;
-            league.teamNames = Array.from({ length: n }, (_, i) => s.league.teamNames[i] ?? `Team ${i + 1}`);
-            league.myTeam = Math.min(league.myTeam, n - 1);
-            rosters = Array.from({ length: n }, (_, i) => s.rosters[i] ?? []);
-          }
-          if (patch.myTeam !== undefined && patch.myTeam !== s.league.myTeam) {
-            // Keep the "My Team" label on whichever slot is the user's.
-            league.teamNames = league.teamNames.map((name, i) =>
-              i === patch.myTeam && /^Team \d+$/.test(name) ? 'My Team' : i === s.league.myTeam && name === 'My Team' ? `Team ${i + 1}` : name,
-            );
-          }
-          return { league, rosters };
-        }),
+        set((s) =>
+          editOpen(s, (l) => {
+            const settings = { ...l.settings, ...patch };
+            let rosters = l.rosters;
+            if (patch.teams !== undefined && patch.teams !== l.settings.teams) {
+              const n = patch.teams;
+              settings.teamNames = Array.from({ length: n }, (_, i) => l.settings.teamNames[i] ?? `Team ${i + 1}`);
+              settings.myTeam = Math.min(settings.myTeam, n - 1);
+              rosters = Array.from({ length: n }, (_, i) => l.rosters[i] ?? []);
+            }
+            if (patch.myTeam !== undefined && patch.myTeam !== l.settings.myTeam) {
+              // Keep the "My Team" label on whichever slot is the user's.
+              settings.teamNames = settings.teamNames.map((name, i) =>
+                i === patch.myTeam && /^Team \d+$/.test(name) ? 'My Team' : i === l.settings.myTeam && name === 'My Team' ? `Team ${i + 1}` : name,
+              );
+            }
+            return { settings, rosters };
+          }),
+        ),
 
       draft: (pid, team) =>
-        set((s) => {
-          if (s.rosters.some((r) => r.includes(pid))) return s;
-          const rosters = s.rosters.map((r, i) => (i === team ? [...r, pid] : r));
-          return { picks: [...s.picks, { pid, team }], rosters };
-        }),
+        set((s) =>
+          editOpen(s, (l) =>
+            l.rosters.some((r) => r.includes(pid))
+              ? null
+              : { picks: [...l.picks, { pid, team }], rosters: l.rosters.map((r, i) => (i === team ? [...r, pid] : r)) },
+          ),
+        ),
 
       undoPick: () =>
-        set((s) => {
-          const last = s.picks[s.picks.length - 1];
-          if (!last) return s;
-          return {
-            picks: s.picks.slice(0, -1),
-            rosters: s.rosters.map((r, i) => (i === last.team ? r.filter((id) => id !== last.pid) : r)),
-          };
-        }),
+        set((s) =>
+          editOpen(s, (l) => {
+            const last = l.picks[l.picks.length - 1];
+            if (!last) return null;
+            return {
+              picks: l.picks.slice(0, -1),
+              rosters: l.rosters.map((r, i) => (i === last.team ? r.filter((id) => id !== last.pid) : r)),
+            };
+          }),
+        ),
 
-      resetDraft: () => set((s) => ({ picks: [], rosters: emptyRosters(s.league.teams) })),
+      resetDraft: () => set((s) => editOpen(s, (l) => ({ picks: [], rosters: emptyRosters(l.settings.teams) }))),
 
       addToRoster: (team, pid) =>
-        set((s) => ({
-          rosters: s.rosters.map((r, i) => (i === team ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
-        })),
+        set((s) =>
+          editOpen(s, (l) => ({
+            rosters: l.rosters.map((r, i) => (i === team ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
+          })),
+        ),
 
       removeFromRoster: (team, pid) =>
-        set((s) => ({
-          rosters: s.rosters.map((r, i) => (i === team ? r.filter((x) => x !== pid) : r)),
-          stream: { ...s.stream, droppable: s.stream.droppable.filter((x) => x !== pid) },
-        })),
+        set((s) =>
+          editOpen(s, (l) => ({
+            rosters: l.rosters.map((r, i) => (i === team ? r.filter((x) => x !== pid) : r)),
+            stream: { ...l.stream, droppable: l.stream.droppable.filter((x) => x !== pid) },
+          })),
+        ),
 
       movePlayer: (pid, toTeam) =>
-        set((s) => ({
-          rosters: s.rosters.map((r, i) => (i === toTeam ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
-        })),
+        set((s) =>
+          editOpen(s, (l) => ({
+            rosters: l.rosters.map((r, i) => (i === toTeam ? [...r.filter((x) => x !== pid), pid] : r.filter((x) => x !== pid))),
+          })),
+        ),
+
+      setOpponent: (week, team) => set((s) => editOpen(s, (l) => ({ opponents: { ...l.opponents, [week]: team } }))),
+      updateStream: (patch) => set((s) => editOpen(s, (l) => ({ stream: { ...l.stream, ...patch } }))),
+      finishSetup: () => set((s) => editOpen(s, () => ({ setupDone: true }))),
 
       setOverride: (pid, patch) =>
         set((s) => {
@@ -154,27 +182,121 @@ export const useStore = create<AppState>()(
             if (Object.keys(merged).length) overrides[pid] = merged;
             else delete overrides[pid];
           }
-          return { overrides };
+          return { overrides, prefsUpdatedAt: prefsStamp(s) };
         }),
 
-      setOpponent: (week, team) => set((s) => ({ opponents: { ...s.opponents, [week]: team } })),
-      updateStream: (patch) => set((s) => ({ stream: { ...s.stream, ...patch } })),
-      setDateOverride: (d) => set({ dateOverride: d }),
-      finishSetup: () => set({ setupDone: true }),
+      setDateOverride: (d) => set((s) => ({ dateOverride: d, prefsUpdatedAt: prefsStamp(s) })),
+
+      createLeague: () => {
+        const s = get();
+        const names = new Set(s.leagues.map((l) => l.settings.name));
+        let n = s.leagues.length + 1;
+        while (names.has(`League ${n}`)) n++;
+        const league = newLeague(`League ${n}`, true);
+        // An untouched placeholder the user has now seen alongside a new league is kept as a real league.
+        const leagues = s.leagues.map((l) => (isPlaceholder(l) ? { ...l, updatedAt: stamp() } : l));
+        set({ leagues: [...leagues, league], activeId: league.id });
+        return league.id;
+      },
+
+      switchLeague: (id) => set((s) => (s.leagues.some((l) => l.id === id) ? { activeId: id } : s)),
+
+      deleteLeague: (id) =>
+        set((s) => {
+          if (!s.leagues.some((l) => l.id === id)) return s;
+          const rest = s.leagues.filter((l) => l.id !== id);
+          const leagues = rest.length ? rest : [newLeague()];
+          return {
+            leagues,
+            activeId: leagues.some((l) => l.id === s.activeId) ? s.activeId : leagues[0].id,
+            // Queued even if it never synced: a push could be in flight, and deleting a missing row is harmless.
+            deleted: [...s.deleted, id],
+          };
+        }),
+
+      applyRemote: (remote) => set((s) => mergeRemote(s, remote)),
+
+      markSynced: ({ leagues, deleted, prefs }) =>
+        set((s) => ({
+          leagues: s.leagues.map((l) => (Object.hasOwn(leagues, l.id) ? { ...l, syncedAt: leagues[l.id] } : l)),
+          deleted: s.deleted.filter((id) => !deleted.includes(id)),
+          ...(prefs !== undefined ? { prefsSyncedAt: prefs } : {}),
+        })),
     }),
     {
-      name: 'win-fantasy-hoops',
-      version: 1,
-      storage: createJSONStorage(() => {
-        try {
-          return localStorage;
-        } catch {
-          return sessionStorage;
-        }
+      name: DEVICE_KEY,
+      version: 2,
+      storage: createJSONStorage(() => deferred),
+      skipHydration: true,
+      partialize: (s): SavedState => ({
+        leagues: s.leagues,
+        activeId: s.activeId,
+        deleted: s.deleted,
+        overrides: s.overrides,
+        dateOverride: s.dateOverride,
+        prefsUpdatedAt: s.prefsUpdatedAt,
+        prefsSyncedAt: s.prefsSyncedAt,
       }),
+      migrate: (saved, version) => (version < 2 ? migrateV1(saved) : normalizeSaved(saved)),
+      merge: (saved, current) => (saved ? { ...current, ...normalizeSaved(saved) } : current),
     },
   ),
 );
+
+/** Select from the open league. */
+export function useLeague<T>(select: (l: League) => T): T {
+  return useStore((s) => select(activeLeague(s)));
+}
+
+/** Load the leagues saved under `key` (this device, or one account on it) and keep saving there. */
+export async function openStore(key: string) {
+  backing = browserStorage();
+  useStore.persist.setOptions({ name: key });
+  await useStore.persist.rehydrate();
+}
+
+/** Forget an account's leagues on this device (signing out). Nothing is saved after this. */
+export function forgetAccount(userId: string) {
+  backing = null;
+  browserStorage().removeItem(accountKey(userId));
+}
+
+/**
+ * Move leagues saved on this device without an account into the signed-in account (once: they're removed from the
+ * device afterwards). Player overrides come along where the account has none for that player. Returns how many leagues
+ * were added.
+ */
+export function importDeviceLeagues(): number {
+  const storage = browserStorage();
+  let saved: SavedState;
+  try {
+    const raw = storage.getItem(DEVICE_KEY) as string | null;
+    if (!raw) return 0;
+    const { state, version } = JSON.parse(raw) as { state?: unknown; version?: number };
+    saved = (version ?? 0) < 2 ? migrateV1(state) : normalizeSaved(state);
+  } catch {
+    return 0;
+  }
+  const s = useStore.getState();
+  const have = new Set(s.leagues.map((l) => l.id));
+  const incoming = saved.leagues.filter((l) => hasContent(l) && !have.has(l.id)).map((l) => ({ ...l, updatedAt: stamp(), syncedAt: undefined }));
+  const patch: Partial<SavedState> = {};
+  if (incoming.length) {
+    const leagues = [...s.leagues.filter((l) => !isPlaceholder(l)), ...incoming];
+    patch.leagues = leagues;
+    patch.activeId = leagues.some((l) => l.id === s.activeId) ? s.activeId : incoming[0].id;
+  }
+  const newOverrides = Object.keys(saved.overrides).some((pid) => !(pid in s.overrides));
+  const newDate = s.dateOverride === null && saved.dateOverride !== null;
+  if (newOverrides || newDate) {
+    patch.overrides = { ...saved.overrides, ...s.overrides };
+    patch.dateOverride = s.dateOverride ?? saved.dateOverride;
+    patch.prefsUpdatedAt = prefsStamp(s);
+  }
+  if (Object.keys(patch).length) useStore.setState(patch);
+  storage.removeItem(DEVICE_KEY);
+  return incoming.length;
+}
 
 /** Team on the clock for overall pick `n` (0-based) in a snake draft. */
 export function snakeTeam(n: number, teams: number) {
