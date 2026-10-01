@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../AppContext';
 import { accountsEnabled, dismissNotice, signOut, useAuth } from '../cloud/auth';
+import { confirmAction } from '../components/confirm';
 import { useSyncStatus } from '../cloud/sync';
 import { ALL_CATS, CATEGORIES, FORMAT_PRESETS, type CatId } from '../engine/categories';
 import { ACTIVE_SLOTS, rosterSize, type SlotCounts } from '../engine/lineup';
@@ -157,8 +158,14 @@ export function SettingsView({ onDone }: { onDone: () => void }) {
           <span className="spacer" />
           <button
             className="btn"
-            onClick={() => {
-              if (confirm('Erase all league data on this device?')) {
+            onClick={async () => {
+              const ok = await confirmAction({
+                title: 'Erase everything on this device?',
+                message: 'Every league, draft, roster and player adjustment saved on this device will be deleted. This can’t be undone.',
+                confirmLabel: 'Erase everything',
+                danger: true,
+              });
+              if (ok) {
                 useStore.persist.clearStorage();
                 location.reload();
               }
@@ -187,9 +194,15 @@ function LeaguesCard() {
   const deleteLeague = useStore((s) => s.deleteLeague);
   const notice = useAuth((a) => a.notice);
 
-  const remove = (l: League) => {
+  const remove = async (l: League) => {
     const where = accountsEnabled ? 'from your account and every device' : 'from this device';
-    if (confirm(`Delete “${leagueName(l)}”? Its settings, draft and rosters will be removed ${where}.`)) deleteLeague(l.id);
+    const ok = await confirmAction({
+      title: `Delete “${leagueName(l)}”?`,
+      message: `Its settings, draft and rosters will be removed ${where}. This can’t be undone.`,
+      confirmLabel: 'Delete league',
+      danger: true,
+    });
+    if (ok) deleteLeague(l.id);
   };
 
   return (

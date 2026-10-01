@@ -18,7 +18,7 @@ Expected-victory tools for Yahoo-style head-to-head **category** fantasy basketb
 | **Draft** | Snake-draft tracker with two spider charts of your team's category strength: last season's actual stats and this season's projection, each as per-game averages or season totals. The charts update with every pick, and tapping a player previews how he would change them. Also has per-category z-scores, punting, and a "best fit" sort. |
 | **Matchup** | Pick a week and opponent. Every scheduled game is projected by the ML model, lineup limits are applied day by day, and it shows win probability per category and overall plus the expected category record. Tap a player to see the game-by-game matchup factors. |
 | **League** | Every team's projected strength (expected categories won per week against the league, win %, category ranks). It also finds trade targets, 1-for-1 and 2-for-2 trades that help you without gutting the other team, and waiver pickups, ranked by categories you choose to target or give up. You can also get the best offers for one player you want, or shop up to three of your own around the league. The stat basis is switchable: current-season averages (falling back to last season until a player has 5 games), the blended projection, or last season. Its roster editor keeps every team current the way Yahoo does: a free agent joining a full roster means picking someone to drop (IL spots open up for injured players), and a player on another team comes over in a 1-for-1 trade. |
-| **Trade** | Trade Analyzer. Pick two teams and add players on both sides (even or uneven). It shows each player's per-game stats (2025-26 averages, the projection, or 2026-27 so far) and, for each team, how the trade changes its expected categories won, matchup win %, league rank, roster size and every category. |
+| **Trade** | Trade Analyzer. Pick two teams and add players on both sides (even or uneven). It shows each player's per-game stats (2025-26 averages, the projection, or 2026-27 so far; with the projection you can type in what-if numbers). It judges the trade by value over replacement: each team's trade value is Σ (player value − replacement value) over the players it gets, minus those it sends and drops, so the side getting more players isn't favored for that alone. For each team it also shows how the trade changes its expected categories won, matchup win %, league rank, roster size and every category, with open roster spots filled by replacement-level free agents. A team pushed over its roster limit picks who to drop, and **Process trade** updates both rosters. |
 | **Stream** | Plans this week's add/drops within your remaining adds. It either chases chosen categories or maximizes your chance of beating this week's opponent, respects "next-day" add rules, and only counts games where an open lineup slot exists. |
 | **Settings** | Your leagues (add, open, delete), then the open league's format, roster slots, weekly add limit and team names, a planning date, the model's accuracy report, and your account. |
 
@@ -152,6 +152,20 @@ adds used) finds the best pickup sequence. A knapsack then splits your remaining
 across spots. In "beat my opponent" mode, each category is weighted by how much one
 more unit raises your chance of winning it (∂P/∂μ), so swing categories drive the picks.
 
+**Trade value.** A player's value is his z-score total across the league's categories
+(against every player with minutes) for his expected production per game on the chosen
+basis, discounted for missed games. That's the same production the team impact credits
+him with. The replacement value is the average value of the players ranked just past
+the league's roster spots (ranks 131–140 in a 10-team league with 13 spots): the best
+players nobody has room for. A team's trade value is Σ (value − replacement value)
+over the players it gets, minus the same over the players it sends and drops. In a
+2-for-1, the team sending two gets a free agent's worth for its open spot, and the
+team getting two gives up a replacement-level player until it picks who to drop. The
+team impact counts rosters the same way: each open spot holds a replacement-level free
+agent (the tier's average production). A player out injured counts ±0, since he waits
+on IL while a free agent takes his spot. What-if projection edits change the edited
+players' values, never the replacement level.
+
 ## Deploying
 
 `npm run build` produces a static site in `dist/` that works from any path (relative
@@ -198,10 +212,10 @@ pipeline/           Python data pipeline
   models.py         Poisson GLM (scikit-learn), LightGBM, tree export
   build.py          holdout test, final training, app bundle
   tests/            pytest: parsers (trimmed real pages), leakage, models
-src/engine/         app engine (TypeScript): projection, model, lineup, matchup, league, streaming, z-scores
+src/engine/         app engine (TypeScript): projection, model, lineup, matchup, league, trade value, streaming, z-scores
 src/state/          leagues (format, migration, merging the account's copy) and the app store
 src/cloud/          Supabase client, sign-in, sync
-src/views/          Draft, Matchup, League, Stream, Settings, PlayerSheet, sign-in
+src/views/          Draft, Matchup, League, Trade, Stream, Settings, PlayerSheet, sign-in
 supabase/schema.sql tables and row-level security for accounts
 public/data/        bundle.json (players, schedule, team defense tables, model)
 tests/              engine tests (vitest), incl. LightGBM tree parity; league store and sync merge

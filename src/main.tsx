@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { bootAuth } from './cloud/auth';
 import { AuthGate } from './cloud/AuthGate';
+import { ConfirmHost } from './components/ConfirmHost';
 import { loadBundle } from './data/loader';
 import './styles.css';
 
@@ -15,6 +16,7 @@ createRoot(document.getElementById('root')!).render(
     <AuthGate>
       <App />
     </AuthGate>
+    <ConfirmHost />
   </StrictMode>,
 );
 

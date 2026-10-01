@@ -1,13 +1,15 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useApp } from '../AppContext';
+import { confirmAction } from '../components/confirm';
 import { Delta, Icon, PlayerName, Segmented, pct } from '../components/ui';
 import type { PlayerData } from '../data/types';
 import { applyCategoryEdits, CATEGORIES, catValue, formatCat, type CatDef, type CatId } from '../engine/categories';
-import { eligOf, withProjectionEdits, type EngineCtx } from '../engine/context';
+import { eligOf, isOut, withProjectionEdits, type EngineCtx } from '../engine/context';
 import { tradeImpact, type LeagueTeamReport } from '../engine/league';
 import { seasonProjection, type Basis } from '../engine/projection';
 import { rosterCapacity } from '../engine/roster';
 import { perGame, sumLines, type StatLine } from '../engine/stats';
+import { teamTradeValue, tradeValues, withEdits, type TeamTradeValue, type TradeValues } from '../engine/tradeValue';
 import { useLeague, useStore } from '../state/store';
 
 /** A player's per-game line and games for the basis; null when he has none (no games this season yet, or a rookie last season). */
@@ -21,6 +23,15 @@ function statsFor(ctx: EngineCtx, p: PlayerData, basis: Basis): { line: StatLine
 }
 
 const signed = (def: CatDef, d: number) => `${d >= 0 ? '+' : '−'}${formatCat(def, Math.abs(d))}`;
+const signedValue = (v: number) => (Math.abs(v) < 0.005 ? '±0' : `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`);
+const shownValue = (v: number) => (v <= -0.005 ? `−${Math.abs(v).toFixed(2)}` : Math.abs(v).toFixed(2));
+/** A value with its sign: green when it helps the team, red when it hurts. */
+function Net({ v }: { v: number }) {
+  if (Math.abs(v) < 0.005) return <span className="muted">±0</span>;
+  return <span className={v > 0 ? 'delta-up' : 'delta-down'}>{signedValue(v)}</span>;
+}
+/** A trade is about even while each team is within this much value of the middle. */
+const EVEN = 0.5;
 const NO_DROPS: string[] = [];
 /** Decimals a category is shown (and edited) with. */
 const shownDigits = (def: CatDef) => (def.kind === 'ratio' && def.id !== 'A/T' ? 3 : def.decimals);
@@ -85,11 +96,26 @@ export function TradeView() {
   };
   const resetEdits = (pid?: string) => setEdits((all) => (pid ? { ...all, [pid]: {} } : {}));
 
+  // Value over replacement: every player's value, the replacement level, and a replacement-level player's production
+  // for open roster spots (so the team getting more players isn't better off just for having more of them). What-if
+  // edits change the edited players' values, never the replacement level.
+  const baseValues = useMemo(
+    () => tradeValues(ctx, league.cats, basis, league.teams, league.slots),
+    [ctx, league.cats, basis, league.teams, league.slots],
+  );
+  const values = useMemo(() => withEdits(baseValues, actx), [baseValues, actx]);
+  const fill = baseValues.fill;
   const filled = teamRosters.filter((r) => r.length > 0).length;
   const impact = useMemo(
-    () => (filled >= 2 && aIds.length + bIds.length > 0 ? tradeImpact(actx, teamRosters, teamA, teamB, aIds, bIds, league.cats, basis, drops) : null),
-    [actx, teamRosters, teamA, teamB, aIds, bIds, league.cats, basis, filled, drops],
+    () => (filled >= 2 && aIds.length + bIds.length > 0 ? tradeImpact(actx, teamRosters, teamA, teamB, aIds, bIds, league.cats, basis, drops, fill) : null),
+    [actx, teamRosters, teamA, teamB, aIds, bIds, league.cats, basis, filled, drops, fill],
   );
+  const worth = useMemo(
+    () => impact && [teamA, teamB].map((t) => teamTradeValue(actx, values, teamRosters[t], impact.traded[t], impact.rosters[t])),
+    [impact, actx, values, teamRosters, teamA, teamB],
+  );
+  const edge = worth ? (worth[0].total - worth[1].total) / 2 : 0;
+  const verdict = Math.abs(edge) < EVEN ? 'About even' : `${league.teamNames[edge > 0 ? teamA : teamB]} wins the trade`;
 
   const players = (team: number, ids: string[]) => (teamRosters[team] ?? []).filter((p) => ids.includes(p.id));
   const fromA = players(teamA, aIds);
@@ -101,15 +127,26 @@ export function TradeView() {
   const blocker = !aIds.length || !bIds.length
     ? 'Add a player to each side to process the trade.'
     : [teamA, teamB].filter((t) => excess(t) > 0).map((t) => `${league.teamNames[t]} needs to drop ${excess(t)} more.`).join(' ') || null;
-  const process = () => {
+  const process = async () => {
     if (!impact) return;
     const list = (ps: PlayerData[]) => ps.map((p) => p.name).join(', ');
-    const lines = [`${league.teamNames[teamA]} sends ${list(fromA)}`, `${league.teamNames[teamB]} sends ${list(fromB)}`];
-    for (const t of [teamA, teamB]) {
-      const cut = impact.traded[t].filter((p) => drops.includes(p.id));
-      if (cut.length) lines.push(`${league.teamNames[t]} drops ${list(cut)}`);
-    }
-    if (!confirm(`Process this trade?\n\n${lines.join('\n')}\n\nBoth rosters will be updated.`)) return;
+    const moves = [
+      { team: teamA, verb: 'sends', players: fromA },
+      { team: teamB, verb: 'sends', players: fromB },
+      ...[teamA, teamB].map((team) => ({ team, verb: 'drops', players: impact.traded[team].filter((p) => drops.includes(p.id)) })),
+    ].filter((m) => m.players.length);
+    const ok = await confirmAction({
+      title: 'Process this trade?',
+      details: moves.map((m) => (
+        <>
+          <b>{league.teamNames[m.team]}</b> {m.verb} {list(m.players)}
+        </>
+      )),
+      message: 'Both rosters will be updated.',
+      confirmLabel: 'Process trade',
+    });
+    if (!ok) return;
+    const lines = moves.map((m) => `${league.teamNames[m.team]} ${m.verb} ${list(m.players)}`);
     processTrade(teamA, teamB, aIds, bIds, drops);
     setProcessed(`${lines.join('. ')}.`);
     setSendsA([]);
@@ -142,8 +179,9 @@ export function TradeView() {
           ? `${lastLabel} per-game averages.`
           : basis === 'proj'
             ? 'Blended projection (current games shrunk toward last season, aging applied).'
-            : `${curLabel} per-game averages${curGames ? '' : ` (no ${curLabel} games yet)`}; team impact uses ${lastLabel} for players with fewer than 5 games.`}{' '}
-        Team impact credits each player with 3.5 games a week, discounted for missed-game risk.
+            : `${curLabel} per-game averages${curGames ? '' : ` (no ${curLabel} games yet)`}; trade value and team impact use ${lastLabel} for players with fewer than 5 games.`}{' '}
+        Team impact credits each player with 3.5 games a week, discounted for missed-game risk, and fills open roster spots with
+        replacement-level free agents.
       </p>
 
       {filled < 2 ? (
@@ -176,18 +214,41 @@ export function TradeView() {
                 onEdit={editStat}
                 onReset={resetEdits}
               />
-              <div className="card row wrap" style={{ gap: 14 }}>
-                <span className="secondary">Expected categories won per week:</span>
-                {[teamA, teamB].map((t) => (
-                  <span key={t}>
-                    <b>{league.teamNames[t]}</b> <Delta v={impact.after[t].power - impact.before[t].power} />
-                  </span>
-                ))}
-                <span className="spacer" />
-                {blocker && <span className="small muted">{blocker}</span>}
-                <button className="btn primary" disabled={!!blocker} onClick={process}>
-                  Process trade
-                </button>
+              <div className="card stack trade-value">
+                <div className="card-head" style={{ marginBottom: 0 }}>
+                  <h2>Trade value</h2>
+                  <span className="small muted">Σ (player value − replacement value)</span>
+                </div>
+                <div className="grid two">
+                  {[teamA, teamB].map((t, i) => (
+                    <ValueTable key={t} name={league.teamNames[t]} worth={worth![i]} />
+                  ))}
+                </div>
+                <p className="small muted" style={{ margin: 0 }}>
+                  A player’s value is his z-score total across the league’s categories, per game and discounted for missed games.
+                  He counts for what he adds over a replacement-level free agent (value {values.replacement.toFixed(2)}, the
+                  average of the players ranked {values.tier[0]}–{values.tier[1]}), so getting more players isn’t a win by itself:
+                  each extra player takes a roster spot a free agent could fill.
+                </p>
+                <div className="row wrap verdict">
+                  <div className="stack" style={{ gap: 2 }}>
+                    <b>{verdict}</b>
+                    <span className="small secondary">
+                      Expected categories won per week:{' '}
+                      {[teamA, teamB].map((t, i) => (
+                        <Fragment key={t}>
+                          {i > 0 && ' · '}
+                          {league.teamNames[t]} <Delta v={impact.after[t].power - impact.before[t].power} />
+                        </Fragment>
+                      ))}
+                    </span>
+                  </div>
+                  <span className="spacer" />
+                  {blocker && <span className="small muted">{blocker}</span>}
+                  <button className="btn primary" disabled={!!blocker} onClick={process}>
+                    Process trade
+                  </button>
+                </div>
               </div>
               <div className="grid two">
                 {[
@@ -203,6 +264,7 @@ export function TradeView() {
                     final={impact.rosters[s.team]}
                     drops={drops}
                     onDrops={setDrops}
+                    values={values}
                   />
                 ))}
               </div>
@@ -409,6 +471,88 @@ function StatInput({ value, digits, ratio, label, onCommit }: { value: number; d
   );
 }
 
+/** One team's trade value: the players it gets, sends and drops, each counted for his value over replacement. */
+function ValueTable({ name, worth }: { name: string; worth: TeamTradeValue }) {
+  const groups = [
+    { label: 'Gets', lines: worth.gets, pending: 0 },
+    { label: 'Sends', lines: worth.sends, pending: 0 },
+    { label: 'Drops', lines: worth.drops, pending: worth.toDrop },
+  ];
+  return (
+    <div className="value-side">
+      <table>
+        <thead>
+          <tr>
+            <th className="l">{name}</th>
+            <th title="z-score total across the league’s categories">Value</th>
+            <th title="Value over replacement: + for players coming in, − for players going out">Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map(({ label, lines, pending }) =>
+            lines.length || pending ? (
+              <Fragment key={label}>
+                <tr className="group">
+                  <td className="l" colSpan={3}>
+                    {label}
+                  </td>
+                </tr>
+                {lines.map((l) => (
+                  <tr key={l.player.id}>
+                    <td className="l">
+                      <PlayerName p={l.player} />
+                    </td>
+                    <td className="num">
+                      {l.value === null ? (
+                        <span className="muted" title="Out injured: he waits on IL while a free agent takes his spot">
+                          out
+                        </span>
+                      ) : (
+                        shownValue(l.value)
+                      )}
+                    </td>
+                    <td className="num">
+                      <Net v={l.net} />
+                    </td>
+                  </tr>
+                ))}
+                {pending > 0 && (
+                  <tr>
+                    <td className="l note muted" colSpan={2}>
+                      {pending > 1 ? `${pending} players` : 'One player'} still to pick, counted at replacement level
+                    </td>
+                    <td className="num">
+                      <Net v={0} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ) : null,
+          )}
+          {Math.abs(worth.injured) >= 0.005 && (
+            <tr>
+              <td className="l note muted" colSpan={2}>
+                Injured players without an IL slot, taking a roster spot
+              </td>
+              <td className="num">
+                <Net v={worth.injured} />
+              </td>
+            </tr>
+          )}
+          <tr className="total">
+            <td className="l" colSpan={2}>
+              Trade value
+            </td>
+            <td className="num">
+              <Net v={worth.total} />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function BeforeAfter({ label, before, after, show, delta }: { label: string; before: number; after: number; show: (v: number) => string; delta: ReactNode }) {
   return (
     <div className="tile">
@@ -423,7 +567,8 @@ function BeforeAfter({ label, before, after, show, delta }: { label: string; bef
 
 /**
  * How one team changes: overall strength, matchup odds, league rank, roster size, and every category. A team the trade
- * puts over its roster limit picks who to drop, and every number then counts those drops.
+ * puts over its roster limit picks who to drop, and every number then counts those drops; open spots count as
+ * replacement-level free agents.
  */
 function TeamImpact({
   team,
@@ -435,6 +580,7 @@ function TeamImpact({
   final,
   drops,
   onDrops,
+  values,
 }: {
   team: number;
   gets: PlayerData[];
@@ -447,6 +593,7 @@ function TeamImpact({
   final: PlayerData[];
   drops: string[];
   onDrops: (ids: string[]) => void;
+  values: TradeValues;
 }) {
   const { ctx, rosterOf } = useApp();
   const league = useLeague((l) => l.settings);
@@ -469,6 +616,7 @@ function TeamImpact({
         <div className="small secondary" style={{ marginTop: 2 }}>
           Gets {names(gets)} · sends {names(gives)}
           {dropped.length > 0 && ` · drops ${names(dropped)}`}
+          {over < 0 && ` · ${-over > 1 ? `free agents fill ${-over} open spots` : 'a free agent fills the open spot'}`}
         </div>
       </div>
       <div className="stat-tiles">
@@ -487,6 +635,7 @@ function TeamImpact({
           <div className="check-list">
             {traded.map((p) => {
               const on = drops.includes(p.id);
+              const net = isOut(ctx, p) ? null : (values.value.get(p.id) ?? values.nothing) - values.replacement;
               return (
                 <label key={p.id} className="row check">
                   <input
@@ -495,11 +644,29 @@ function TeamImpact({
                     disabled={!on && over <= 0}
                     onChange={() => onDrops(on ? drops.filter((id) => id !== p.id) : [...drops, p.id])}
                   />
-                  <PlayerName p={p} extra={gets.includes(p) ? <span className="badge mine">new</span> : undefined} />
+                  <PlayerName
+                    p={p}
+                    extra={
+                      <>
+                        {gets.includes(p) && <span className="badge mine">new</span>}
+                        {net !== null && (
+                          <span className="vor" title="Value over a replacement-level free agent">
+                            {signedValue(net)}
+                          </span>
+                        )}
+                      </>
+                    }
+                  />
                 </label>
               );
             })}
           </div>
+          {over > 0 && (
+            <span className="small">
+              Next to each player: his value over replacement. Until you pick, the numbers count{' '}
+              {over > 1 ? 'each drop as a replacement-level player' : 'the drop as a replacement-level player'}.
+            </span>
+          )}
         </div>
       )}
       <div className="table-wrap">

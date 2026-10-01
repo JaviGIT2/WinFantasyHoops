@@ -63,22 +63,25 @@ export function computeZ(
   }
 
   const rows = new Map<string, ZRow>();
-  for (const p of players) {
-    const z: Record<string, number> = {};
-    let total = 0;
-    for (const c of cats) {
-      const n = norms[c];
-      let v = (raw(p.line, c, n.ref ?? 0) - n.mean) / n.sd;
-      if (CATEGORIES[c].lowerIsBetter) v = -v;
-      z[c] = v;
-      if (!punts.includes(c)) total += v;
-    }
-    rows.set(p.id, { id: p.id, z, total, line: p.line });
-  }
+  for (const p of players) rows.set(p.id, { id: p.id, ...zOf(p.line, cats, norms, punts), line: p.line });
 
   const pool = league.map((p) => rows.get(p.id)!).sort((a, b) => b.total - a.total).slice(0, draftableSize);
   const draftable = Object.fromEntries(cats.map((c) => [c, meanSd(pool.map((r) => r.z[c]))]));
   return { rows, norms, leagueSize: league.length, draftable, draftableSize: pool.length };
+}
+
+/** A stat line's z-scores against league norms from `computeZ`; the total leaves out punted categories. */
+export function zOf(line: StatLine, cats: CatId[], norms: ZResult['norms'], punts: CatId[] = []): { z: Record<string, number>; total: number } {
+  const z: Record<string, number> = {};
+  let total = 0;
+  for (const c of cats) {
+    const n = norms[c];
+    let v = (raw(line, c, n.ref ?? 0) - n.mean) / n.sd;
+    if (CATEGORIES[c].lowerIsBetter) v = -v;
+    z[c] = v;
+    if (!punts.includes(c)) total += v;
+  }
+  return { z, total };
 }
 
 /**

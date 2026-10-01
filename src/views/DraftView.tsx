@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { useApp } from '../AppContext';
+import { confirmAction } from '../components/confirm';
 import { RadarChart } from '../components/RadarChart';
 import { PlayerName, Segmented, zStyle } from '../components/ui';
 import { searchKey } from '../data/loader';
@@ -186,7 +187,15 @@ export function DraftView() {
         <button
           className="btn small ghost"
           disabled={!picks.length}
-          onClick={() => confirm('Clear every pick and roster?') && resetDraft()}
+          onClick={async () => {
+            const ok = await confirmAction({
+              title: 'Reset the draft?',
+              message: 'Every pick and roster in this league will be cleared.',
+              confirmLabel: 'Reset draft',
+              danger: true,
+            });
+            if (ok) resetDraft();
+          }}
         >
           Reset
         </button>

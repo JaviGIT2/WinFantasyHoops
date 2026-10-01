@@ -1,5 +1,6 @@
 import { isAuthRetryableFetchError, type AuthChangeEvent, type Session } from '@supabase/supabase-js';
 import { create } from 'zustand';
+import { confirmAction } from '../components/confirm';
 import { isPlaceholder } from '../state/leagues';
 import { accountKey, DEVICE_KEY, forgetAccount, importDeviceLeagues, openStore, useStore } from '../state/store';
 import { AUTH_STORAGE_KEY, supabase } from './supabase';
@@ -175,7 +176,14 @@ export async function signOut() {
   const { account } = useAuth.getState();
   if (!supabase || !account) return;
   const synced = await flushSync();
-  if (!synced && !confirm("Some changes haven't reached your account yet (you may be offline). Sign out anyway and lose them?")) return;
+  const lose = () =>
+    confirmAction({
+      title: 'Sign out with unsynced changes?',
+      message: "Some changes haven't reached your account yet (you may be offline). If you sign out now, they're lost.",
+      confirmLabel: 'Sign out anyway',
+      danger: true,
+    });
+  if (!synced && !(await lose())) return;
   leaving = true;
   stopSync();
   forgetAccount(account.id);

@@ -1,8 +1,10 @@
 import type { PlayerData } from '../data/types';
 import { CATEGORIES, type CatId } from './categories';
 import type { EngineCtx } from './context';
+import type { SlotCounts } from './lineup';
 import { addAgg, catDist, catOdds, cloneAgg, compareAggs, emptyAgg, type Agg } from './matchup';
 import { availability, perGameFor, type Basis } from './projection';
+import { rosterCapacity } from './roster';
 import { MODEL_STATS } from './stats';
 
 /**
@@ -27,8 +29,28 @@ export function playerWeekAgg(ctx: EngineCtx, p: PlayerData, basis: Basis, games
   return agg;
 }
 
-export function teamAgg(ctx: EngineCtx, players: PlayerData[], basis: Basis): Agg {
-  return players.reduce((acc, p) => addAgg(acc, playerWeekAgg(ctx, p, basis)), emptyAgg());
+/**
+ * Open roster spots counted at replacement level, so rosters of different sizes compare fairly: each open spot holds a
+ * replacement-level free agent, and a team over its limit gives one up for each extra player (a drop not chosen yet
+ * counts as a replacement-level player).
+ */
+export interface ReplacementFill {
+  slots: SlotCounts;
+  /** Weekly production of one replacement-level player. */
+  agg: Agg;
+}
+
+/** Roster spots a team has free (negative when it's over its limit). */
+export const openSpots = (ctx: EngineCtx, slots: SlotCounts, roster: PlayerData[]) => rosterCapacity(ctx, slots, roster) - roster.length;
+
+export function teamAgg(ctx: EngineCtx, players: PlayerData[], basis: Basis, fill?: ReplacementFill): Agg {
+  const agg = players.reduce((acc, p) => addAgg(acc, playerWeekAgg(ctx, p, basis)), emptyAgg());
+  const open = fill ? openSpots(ctx, fill.slots, players) : 0;
+  if (!fill || !open) return agg;
+  addAgg(agg, fill.agg, open);
+  // Giving up spots can't take a team below nothing.
+  for (const k of ['mean', 'var', 'pend'] as const) agg[k] = agg[k].map((v) => Math.max(0, v));
+  return agg;
 }
 
 /** Expected categories won (ties count half) by A against B. */
@@ -54,8 +76,8 @@ export interface LeagueTeamReport {
   catWins: Record<string, number>;
 }
 
-export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatId[], basis: Basis): LeagueTeamReport[] {
-  const aggs = rosters.map((r) => teamAgg(ctx, r, basis));
+export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatId[], basis: Basis, fill?: ReplacementFill): LeagueTeamReport[] {
+  const aggs = rosters.map((r) => teamAgg(ctx, r, basis, fill));
   const reports = aggs.map((agg, i) => {
     const vs: number[] = [];
     const catWins: Record<string, number> = Object.fromEntries(cats.map((c) => [c, 0]));
@@ -94,7 +116,9 @@ export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatI
 /**
  * The whole league before and after a trade between teams `a` and `b`, any number of players each way (uneven trades
  * too), with `drops` (players either team cuts to get back under its roster limit) removed afterwards. `traded` is
- * the rosters right after the trade, `rosters` after the drops. Players not on the sending team are ignored.
+ * the rosters right after the trade, `rosters` after the drops. Players not on the sending team are ignored. With a
+ * `fill`, every team's open roster spots count at replacement level, before and after, so the team getting more
+ * players isn't better off just for having more of them.
  */
 export function tradeImpact(
   ctx: EngineCtx,
@@ -106,6 +130,7 @@ export function tradeImpact(
   cats: CatId[],
   basis: Basis,
   drops: string[] = [],
+  fill?: ReplacementFill,
 ): { before: LeagueTeamReport[]; after: LeagueTeamReport[]; traded: PlayerData[][]; rosters: PlayerData[][] } {
   const fromA = rosters[a].filter((p) => aSends.includes(p.id));
   const fromB = rosters[b].filter((p) => bSends.includes(p.id));
@@ -113,7 +138,7 @@ export function tradeImpact(
     i === a ? [...r.filter((p) => !fromA.includes(p)), ...fromB] : i === b ? [...r.filter((p) => !fromB.includes(p)), ...fromA] : r,
   );
   const after = traded.map((r, i) => ((i === a || i === b) && drops.length ? r.filter((p) => !drops.includes(p.id)) : r));
-  return { before: leagueReport(ctx, rosters, cats, basis), after: leagueReport(ctx, after, cats, basis), traded, rosters: after };
+  return { before: leagueReport(ctx, rosters, cats, basis, fill), after: leagueReport(ctx, after, cats, basis, fill), traded, rosters: after };
 }
 
 /** How much each category counts when scoring my moves (missing = 1). */
