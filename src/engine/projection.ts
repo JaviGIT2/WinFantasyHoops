@@ -120,6 +120,7 @@ export function seasonProjection(ctx: EngineCtx, p: PlayerData): SeasonProjectio
     const pg = zeroLine();
     pg.min = r.min;
     MODEL_STATS.forEach((s, i) => (pg[s] = r.rates[i] * r.min));
+    Object.assign(pg, ctx.projEdits?.[p.id]);
     const remaining = remainingTeamGames(ctx, p.team) || (p.cur ? 0 : 82);
     const gp = (p.cur?.gp ?? 0) + remaining * availability(ctx, p);
     const totals = zeroLine();

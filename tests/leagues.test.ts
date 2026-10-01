@@ -178,6 +178,29 @@ describe('league store', () => {
     expect(activeLeague(useStore.getState()).rosters).toBe(before);
   });
 
+  it('processes uneven trades with drops from either team', () => {
+    const s = useStore.getState();
+    for (const [pid, team] of [['a', 0], ['b', 0], ['c', 0], ['x', 1], ['y', 1], ['z', 2]] as const) s.draft(pid, team);
+    s.updateStream({ droppable: ['b', 'c'] });
+    // Team 0 sends a + b for x; team 1 drops y and the incoming a; z (team 2) can't be dropped by this trade.
+    useStore.getState().processTrade(0, 1, ['a', 'b'], ['x'], ['y', 'a', 'z']);
+    const l = activeLeague(useStore.getState());
+    expect(l.rosters[0]).toEqual(['c', 'x']);
+    expect(l.rosters[1]).toEqual(['b']);
+    expect(l.rosters[2]).toEqual(['z']);
+    expect(l.stream.droppable).toEqual(['c']); // b left my team (team 0)
+  });
+
+  it('won’t process a trade with players who aren’t on the sending team', () => {
+    const s = useStore.getState();
+    for (const [pid, team] of [['a', 0], ['x', 1]] as const) s.draft(pid, team);
+    const before = activeLeague(useStore.getState()).rosters;
+    s.processTrade(0, 1, ['x'], ['a'], []); // swapped sides
+    s.processTrade(0, 0, ['a'], [], []);
+    s.processTrade(0, 1, [], [], ['a']);
+    expect(activeLeague(useStore.getState()).rosters).toBe(before);
+  });
+
   it('keeps an untouched placeholder once a second league is created', () => {
     const placeholder = useStore.getState().activeId;
     useStore.getState().createLeague();

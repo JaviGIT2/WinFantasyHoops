@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .dataset import ADJ, Dataset, broad_positions, load_dataset, to_pos
+from .dataset import ADJ, Dataset, broad_positions, load_dataset, to_pos, unsigned_players
 from .features import (
     A_COLS, E_COLS, FEATURES, K_RATE, POSITIONS, S, STATS, Aggs, Features, build_aggs, featurize, h2h_table, lookup, role,
 )
@@ -214,8 +214,11 @@ def build_bundle(ds: Dataset, ag: Aggs, fall: Features, models: dict, report: di
             injury[inj["id"]] = {"date": inj["date"], "note": note, "status": status}
 
     team_games = cur_rows.groupby("team")["date"].nunique()
+    unsigned = unsigned_players(ds)
+    if unsigned:
+        log(f"  keeping {len(unsigned)} unsigned players from last season: {', '.join(u['name'] for u in unsigned[:6])}…")
     players = []
-    for ro in ds.roster:
+    for ro in [*ds.roster, *unsigned]:
         pid = ro["id"]
         last, prev, cur = season_line(pid, y["last"]), season_line(pid, y["prev"]), season_line(pid, y["cur"])
         primary = (
@@ -244,6 +247,8 @@ def build_bundle(ds: Dataset, ag: Aggs, fall: Features, models: dict, report: di
             "age": age_at(ro["birthDate"]) or (tot_last["age"] + 1 if tot_last else 0),
             "rookie": ro["rookie"], "twoWay": ro["twoWay"], "heightIn": ro["heightIn"],
         }
+        if ro.get("unsigned"):
+            player["unsigned"] = True
         for key, line in (("cur", cur), ("last", last), ("prev", prev)):
             if line:
                 player[key] = line

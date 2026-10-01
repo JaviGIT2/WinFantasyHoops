@@ -1,5 +1,6 @@
 import type { DataBundle, PlayerData, Pos, Role } from '../data/types';
 import { buildScheduleIndex, type ScheduleIndex } from './schedule';
+import type { StatLine } from './stats';
 
 /** Per-player manual adjustments made in the app. */
 export interface PlayerOverride {
@@ -20,8 +21,15 @@ export interface EngineCtx {
   overrides: Record<string, PlayerOverride>;
   /** Games on or before this date use actual box scores when available. */
   today: string;
+  /** What-if projections (the Trade Analyzer's edits): per-game stats by player id that replace the model's. */
+  projEdits?: Record<string, Partial<StatLine>>;
   /** Memo for derived per-player values; invalidated by rebuilding the context. */
   cache: Map<string, unknown>;
+}
+
+/** The same context with season projections overridden by `edits`, and its own memo so nothing leaks back. */
+export function withProjectionEdits(ctx: EngineCtx, edits: Record<string, Partial<StatLine>>): EngineCtx {
+  return Object.keys(edits).length ? { ...ctx, projEdits: edits, cache: new Map() } : ctx;
 }
 
 export function createContext(

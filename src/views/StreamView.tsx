@@ -27,6 +27,8 @@ export function StreamView() {
   const droppable = stream.droppable.filter((id) => mine.some((p) => p.id === id));
   const chase = stream.chase.filter((c) => league.cats.includes(c));
   const mode = stream.mode === 'win' && !opp.length ? 'chase' : stream.mode;
+  // Unsigned free agents can't play this week's games.
+  const streamable = useMemo(() => freeAgents.filter((p) => !p.unsigned), [freeAgents]);
 
   const [plan, setPlan] = useState<StreamPlan | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +51,7 @@ export function StreamView() {
         planStreams(ctx, {
           roster: mine,
           droppable,
-          freeAgents,
+          freeAgents: streamable,
           days: week.days,
           today: planFrom,
           addsLeft,
@@ -174,7 +176,7 @@ export function StreamView() {
                 ? 'Pick at least one category to chase.'
                 : addsLeft === 0
                   ? 'No adds left this week.'
-                  : `${freeAgents.length} free agents in the pool.`}
+                  : `${streamable.length} free agents in the pool.`}
           </span>
           <span className="spacer" />
           <button

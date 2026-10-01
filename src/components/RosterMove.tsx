@@ -3,7 +3,7 @@ import { useApp } from '../AppContext';
 import { eligOf } from '../engine/context';
 import { addMove } from '../engine/roster';
 import { useLeague, useStore } from '../state/store';
-import { InjuryBadge } from './ui';
+import { InjuryBadge, UnsignedBadge } from './ui';
 
 /**
  * Bring a player onto a team under the league's rules. A free agent with room on the roster is added right away;
@@ -68,6 +68,7 @@ export function MovePicker({ team, pid, onDone, onCancel }: { team: number; pid:
                 <span className="n">{p.name}</span>
                 <span className="meta">
                   {p.team} · {eligOf(ctx, p).join(',')}
+                  <UnsignedBadge p={p} />
                   <InjuryBadge p={p} />
                 </span>
               </span>

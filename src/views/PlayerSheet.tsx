@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useApp } from '../AppContext';
 import { MovePicker, useRosterMove } from '../components/RosterMove';
-import { Icon, InjuryBadge, pct } from '../components/ui';
+import { Icon, InjuryBadge, UnsignedBadge, pct } from '../components/ui';
 import { POSITIONS, type Pos, type Role } from '../data/types';
 import { factorEffect, predictGame, statIndex } from '../engine/model';
 import { availability, playerRates, seasonProjection } from '../engine/projection';
@@ -61,12 +61,19 @@ export function PlayerSheet({ id, onClose }: { id: string; onClose: () => void }
               {data.teams[p.team]?.name ?? p.team} · {elig.join('/')} · age {p.age || '?'}
               {p.rookie && <span className="badge rookie">Rookie</span>}
               {p.twoWay && <span className="badge rookie">Two-way</span>}
+              <UnsignedBadge p={p} />
               <InjuryBadge p={p} />
             </div>
           </div>
           <span className="spacer" />
           <button className="icon-btn" onClick={onClose} aria-label="Close">{Icon.close}</button>
         </div>
+        {p.unsigned && (
+          <div className="notice small">
+            Unsigned free agent. He's listed under {data.teams[p.team]?.name ?? p.team}, his last team, until he signs; projections use their
+            schedule. Refresh the data after he signs to move him to his new team.
+          </div>
+        )}
         {p.injury && <div className="notice small">{p.injury.date}: {p.injury.note}</div>}
 
         <div className="card">

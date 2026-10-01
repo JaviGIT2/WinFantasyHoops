@@ -48,20 +48,27 @@ export interface LeagueTeamReport {
   winPct: number;
   /** League rank (1 = best) per category. */
   ranks: Record<string, number>;
+  /** Projected weekly value per category: the total, or the percentage for ratio categories. */
+  values: Record<string, number>;
+  /** Expected wins per category per week against the league (ties count half); they add up to `power`. */
+  catWins: Record<string, number>;
 }
 
 export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatId[], basis: Basis): LeagueTeamReport[] {
   const aggs = rosters.map((r) => teamAgg(ctx, r, basis));
   const reports = aggs.map((agg, i) => {
     const vs: number[] = [];
+    const catWins: Record<string, number> = Object.fromEntries(cats.map((c) => [c, 0]));
     let winSum = 0;
     aggs.forEach((other, j) => {
       if (i === j) return vs.push(NaN);
       const cmp = compareAggs(agg, other, cats);
       vs.push(cmp.odds.expWins + 0.5 * cmp.odds.expTies);
       winSum += cmp.odds.win + 0.5 * cmp.odds.tie;
+      for (const { cat, odds } of cmp.perCat) catWins[cat] += odds.win + 0.5 * odds.tie;
     });
     const others = vs.filter((v) => !Number.isNaN(v));
+    if (others.length) for (const c of cats) catWins[c] /= others.length;
     return {
       index: i,
       agg,
@@ -69,6 +76,8 @@ export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatI
       power: others.length ? others.reduce((a, b) => a + b, 0) / others.length : 0,
       winPct: others.length ? winSum / others.length : 0,
       ranks: {} as Record<string, number>,
+      values: {} as Record<string, number>,
+      catWins,
     };
   });
   // Category ranks by projected weekly value.
@@ -77,8 +86,34 @@ export function leagueReport(ctx: EngineCtx, rosters: PlayerData[][], cats: CatI
     const lower = !!CATEGORIES[c].lowerIsBetter;
     const order = [...vals.keys()].sort((a, b) => (lower ? vals[a] - vals[b] : vals[b] - vals[a]));
     order.forEach((teamIdx, rank) => (reports[teamIdx].ranks[c] = rank + 1));
+    reports.forEach((r, i) => (r.values[c] = vals[i]));
   }
   return reports;
+}
+
+/**
+ * The whole league before and after a trade between teams `a` and `b`, any number of players each way (uneven trades
+ * too), with `drops` (players either team cuts to get back under its roster limit) removed afterwards. `traded` is
+ * the rosters right after the trade, `rosters` after the drops. Players not on the sending team are ignored.
+ */
+export function tradeImpact(
+  ctx: EngineCtx,
+  rosters: PlayerData[][],
+  a: number,
+  b: number,
+  aSends: string[],
+  bSends: string[],
+  cats: CatId[],
+  basis: Basis,
+  drops: string[] = [],
+): { before: LeagueTeamReport[]; after: LeagueTeamReport[]; traded: PlayerData[][]; rosters: PlayerData[][] } {
+  const fromA = rosters[a].filter((p) => aSends.includes(p.id));
+  const fromB = rosters[b].filter((p) => bSends.includes(p.id));
+  const traded = rosters.map((r, i) =>
+    i === a ? [...r.filter((p) => !fromA.includes(p)), ...fromB] : i === b ? [...r.filter((p) => !fromB.includes(p)), ...fromA] : r,
+  );
+  const after = traded.map((r, i) => ((i === a || i === b) && drops.length ? r.filter((p) => !drops.includes(p.id)) : r));
+  return { before: leagueReport(ctx, rosters, cats, basis), after: leagueReport(ctx, after, cats, basis), traded, rosters: after };
 }
 
 /** How much each category counts when scoring my moves (missing = 1). */

@@ -22,6 +22,8 @@ export interface PlayerData {
   rookie: boolean;
   twoWay: boolean;
   heightIn: number;
+  /** On no current roster (an unsigned free agent): listed under the team he last played for until he signs. */
+  unsigned?: boolean;
   /** Season totals: current season to date, last season, the season before. */
   cur?: SeasonLine;
   last?: SeasonLine;

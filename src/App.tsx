@@ -15,11 +15,13 @@ import { MatchupView } from './views/MatchupView';
 import { PlayerSheet } from './views/PlayerSheet';
 import { SettingsView } from './views/SettingsView';
 import { StreamView } from './views/StreamView';
+import { TradeView } from './views/TradeView';
 
 const TABS = [
   { id: 'draft', label: 'Draft', icon: Icon.draft },
   { id: 'matchup', label: 'Matchup', icon: Icon.matchup },
   { id: 'league', label: 'League', icon: Icon.league },
+  { id: 'trade', label: 'Trade', icon: Icon.trade },
   { id: 'stream', label: 'Stream', icon: Icon.stream },
   { id: 'settings', label: 'Settings', icon: Icon.settings },
 ] as const;
@@ -131,6 +133,7 @@ function Loaded({
           {tab === 'draft' && <DraftView />}
           {tab === 'matchup' && <MatchupView />}
           {tab === 'league' && <LeagueView />}
+          {tab === 'trade' && <TradeView />}
           {tab === 'stream' && <StreamView />}
           {tab === 'settings' && <SettingsView onDone={() => go('draft')} />}
         </main>

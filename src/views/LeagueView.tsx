@@ -9,6 +9,7 @@ import { findTrades, leagueReport, offersAway, offersFor, strategyWeights, type 
 import { rosterSize } from '../engine/lineup';
 import type { Basis } from '../engine/projection';
 import { addMove, rosterCapacity, type AddMove } from '../engine/roster';
+import { defaultTeamNames } from '../state/leagues';
 import { useLeague, useStore } from '../state/store';
 
 /** Rank cell color: top of the league blue, bottom red, middle neutral. */
@@ -55,11 +56,29 @@ export function LeagueView() {
     return s ? (s.pts + s.reb + s.ast + 2 * (s.stl + s.blk)) / Math.max(1, s.gp) : 0;
   };
 
+  const updateLeague = useStore((s) => s.updateLeague);
+  const [editingNames, setEditingNames] = useState(false);
+  const rename = (i: number, name: string) => updateLeague({ teamNames: league.teamNames.map((x, j) => (j === i ? name : x)) });
+  const nameInput = (i: number) => (
+    <input
+      type="text"
+      className="team-name"
+      value={league.teamNames[i]}
+      onChange={(e) => rename(i, e.target.value)}
+      // A cleared name goes back to its default rather than leaving a blank team everywhere.
+      onBlur={() => !league.teamNames[i].trim() && rename(i, defaultTeamNames(league.teams, league.myTeam)[i])}
+      aria-label={`Name of team ${i + 1}${i === league.myTeam ? ' (you)' : ''}`}
+    />
+  );
+
   const n = league.teams;
   return (
     <div className="stack">
       <div className="card row wrap">
         <h2>League outlook</h2>
+        <button className="btn small" aria-pressed={editingNames} onClick={() => setEditingNames((e) => !e)}>
+          {editingNames ? 'Done' : 'Edit team names'}
+        </button>
         <span className="spacer" />
         <Segmented
           label="Stat basis"
@@ -82,7 +101,22 @@ export function LeagueView() {
       </p>
 
       {!report ? (
-        <div className="card empty">Add rosters for at least two teams (track every pick in the draft, or use Rosters below).</div>
+        editingNames ? (
+          <div className="card stack">
+            <p className="small muted" style={{ margin: 0 }}>The outlook appears once at least two teams have rosters. Names save as you type.</p>
+            <div className="grid two">
+              {league.teamNames.map((_, i) => (
+                <label key={i} className="field">
+                  Team {i + 1}
+                  {i === league.myTeam ? ' (you)' : ''}
+                  {nameInput(i)}
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="card empty">Add rosters for at least two teams (track every pick in the draft, or use Rosters below).</div>
+        )
       ) : (
         <div className="card">
           <div className="table-wrap">
@@ -98,7 +132,10 @@ export function LeagueView() {
               <tbody>
                 {[...report].sort((a, b) => b.power - a.power).map((r) => (
                   <tr key={r.index} className={r.index === league.myTeam ? 'mine' : ''}>
-                    <td className="l"><b>{league.teamNames[r.index]}</b> <span className="muted small">({teamRosters[r.index].length})</span></td>
+                    <td className="l">
+                      {editingNames ? nameInput(r.index) : <b>{league.teamNames[r.index]}</b>}{' '}
+                      <span className="muted small">({teamRosters[r.index].length})</span>
+                    </td>
                     <td className="num"><b>{r.power.toFixed(2)}</b></td>
                     <td className="num">{pct(r.winPct)}</td>
                     {league.cats.map((c) => (
@@ -109,7 +146,11 @@ export function LeagueView() {
               </tbody>
             </table>
           </div>
-          <p className="small muted">Category cells show league rank (1 = best; blue top third, red bottom third).</p>
+          <p className="small muted">
+            {editingNames
+              ? 'Names save as you type and show everywhere in the app.'
+              : 'Category cells show league rank (1 = best; blue top third, red bottom third).'}
+          </p>
         </div>
       )}
 

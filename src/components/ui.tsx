@@ -36,6 +36,11 @@ export function InjuryBadge({ p }: { p: PlayerData }) {
   );
 }
 
+export function UnsignedBadge({ p }: { p: PlayerData }) {
+  if (!p.unsigned) return null;
+  return <span className="badge rookie" title={`Unsigned free agent, listed under ${p.team} (his last team) until he signs`}>Unsigned</span>;
+}
+
 /** Player name with team/position; opens the player sheet. */
 export function PlayerName({ p, extra }: { p: PlayerData; extra?: ReactNode }) {
   const { openPlayer, ctx } = useApp();
@@ -46,6 +51,7 @@ export function PlayerName({ p, extra }: { p: PlayerData; extra?: ReactNode }) {
       <span className="meta">
         {p.team} · {elig.join(',')}
         {p.rookie && <span className="badge rookie">R</span>}
+        <UnsignedBadge p={p} />
         <InjuryBadge p={p} />
         {extra}
       </span>
@@ -99,6 +105,12 @@ export const Icon = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" />
       <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3" />
+    </svg>
+  ),
+  trade: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 8h15M15 4l4 4-4 4" />
+      <path d="M20 16H5M9 12l-4 4 4 4" />
     </svg>
   ),
   stream: (

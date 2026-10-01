@@ -10,12 +10,16 @@ import pandas as pd
 
 from .features import POSITIONS, STATS
 from .http_cache import CACHE_DIR, read_json
-from .seasons import season_years
+from .seasons import NBA_TEAMS, season_years
 
 IN = CACHE_DIR / "normalized"
 
 # Positions adjacent on the floor; a player is also eligible at a neighbor his roster listing names.
 ADJ = {"PG": ["SG"], "SG": ["PG", "SF"], "SF": ["SG", "PF"], "PF": ["SF", "C"], "C": ["PF"]}
+
+# Unsigned players still matter to fantasy leagues (restricted free agents, veterans between deals). Anyone with this
+# many minutes last season stays in the player pool, under his last team, until a roster lists him again.
+UNSIGNED_MIN_MINUTES = 500
 
 
 def load(name: str, default: Any) -> Any:
@@ -59,6 +63,28 @@ class Dataset:
                 return p
         r = self.roster_by.get(pid, {})
         return (broad_positions(r.get("pos", "F"), r.get("heightIn", 0)) or ["SF"])[0]
+
+
+def unsigned_players(ds: Dataset) -> list[dict]:
+    """Roster-style entries for players with real minutes last season who are on no current roster.
+
+    The team is the one he last played a game for (so a player waived mid-season keeps the team that waived him),
+    and the positions are his recent season listings.
+    """
+    last_team = ds.rows.groupby("pid")["team"].last().to_dict() if not ds.rows.empty else {}
+    out = []
+    for pid, t in ds.totals.get(ds.years["last"], {}).items():
+        if pid in ds.roster_by or (t.get("min") or 0) < UNSIGNED_MIN_MINUTES:
+            continue
+        team = last_team.get(pid) or (t.get("teams") or [t.get("team")])[-1]
+        if team not in NBA_TEAMS:
+            continue
+        listed = (to_pos(ds.totals.get(s, {}).get(pid, {}).get("pos")) for s in (ds.years["last"], ds.years["prev"]))
+        out.append({
+            "id": pid, "name": t["name"], "team": team, "pos": "-".join(dict.fromkeys(p for p in listed if p)),
+            "heightIn": 0, "birthDate": "", "rookie": False, "twoWay": False, "unsigned": True,
+        })
+    return out
 
 
 def load_dataset() -> Dataset:

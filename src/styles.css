@@ -187,6 +187,14 @@ tr.clickable:hover td { background: var(--surface-2); }
 tr.selected td { background: var(--other-wash); }
 tr.mine td { background: var(--mine-wash); }
 td.z { font-size: 12px; border-radius: 0; }
+tr.group td { background: var(--surface-2); color: var(--ink-2); font-size: 12px; font-weight: 650; }
+.team-name { font-weight: 600; }
+.drop-picker { gap: 8px; }
+.drop-picker .check { padding: 2px 0; }
+td .team-name { width: 160px; min-height: 30px; padding: 3px 8px; }
+tr.total td { font-weight: 650; }
+td.edited { background: var(--mine-wash); font-weight: 650; }
+input.stat-edit { width: 64px; min-height: 28px; padding: 2px 6px; text-align: right; }
 
 /* ------------------------------------------------------------ player bits */
 .pname { display: flex; flex-direction: column; min-width: 0; }
@@ -269,6 +277,7 @@ td.z { font-size: 12px; border-radius: 0; }
 .move:last-child { border-bottom: 0; }
 .notice { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); font-size: 13px; }
 .notice.error { background: rgba(208, 59, 59, 0.1); color: var(--crit); }
+.notice.success { background: rgba(12, 163, 12, 0.1); color: var(--good-ink); }
 .loading { min-height: 100dvh; display: grid; place-items: center; color: var(--muted); }
 
 /* ------------------------------------------------------------ accounts and leagues */

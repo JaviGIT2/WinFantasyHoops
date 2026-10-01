@@ -63,6 +63,41 @@ export function catValue(cat: CatDef, line: StatLine): number {
   return den > 0 ? line[cat.num!] / den : 0;
 }
 
+const ATTEMPTS: Partial<Record<StatKey, StatKey>> = { fgm: 'fga', ftm: 'fta', tpm: 'tpa' };
+
+/**
+ * A per-game line with category values typed in by the user, e.g. PTS 20 or FG% .480. Editing made shots (3PM, FGM,
+ * FTM) scales the attempts with them so the percentage holds; for a player projected to take none, attempts come
+ * from `shotRef` (league percentage by attempts stat). Editing a percentage moves the makes, or the attempts when the
+ * makes are a category of their own in `leagueCats` (so that edit stands). A/T can't be set: it follows AST and TO.
+ */
+export function applyCategoryEdits(
+  base: StatLine,
+  edits: Partial<Record<CatId, number>>,
+  leagueCats: CatId[],
+  shotRef: Partial<Record<StatKey, number>> = {},
+): StatLine {
+  const line = { ...base };
+  const entries = Object.entries(edits) as [CatId, number][];
+  for (const [c, v] of entries) {
+    const def = CATEGORIES[c];
+    if (def.kind !== 'count') continue;
+    const made = def.stat!;
+    const tried = ATTEMPTS[made];
+    if (tried) line[tried] = line[made] > 0 ? (line[tried] * v) / line[made] : shotRef[tried] ? v / shotRef[tried] : line[tried];
+    line[made] = v;
+  }
+  for (const [c, v] of entries) {
+    const def = CATEGORIES[c];
+    if (def.kind !== 'ratio' || c === 'A/T') continue;
+    const [made, tried] = [def.num!, def.den!];
+    if (leagueCats.some((x) => CATEGORIES[x].kind === 'count' && CATEGORIES[x].stat === made)) {
+      if (v > 0) line[tried] = line[made] / v;
+    } else line[made] = v * line[tried];
+  }
+  return line;
+}
+
 export function formatCat(cat: CatDef, value: number): string {
   if (cat.kind === 'ratio' && cat.id !== 'A/T') return value.toFixed(3).replace(/^0/, '');
   return value.toFixed(cat.decimals);

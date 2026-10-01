@@ -18,6 +18,7 @@ Expected-victory tools for Yahoo-style head-to-head **category** fantasy basketb
 | **Draft** | Snake-draft tracker with two spider charts of your team's category strength: last season's actual stats and this season's projection, each as per-game averages or season totals. The charts update with every pick, and tapping a player previews how he would change them. Also has per-category z-scores, punting, and a "best fit" sort. |
 | **Matchup** | Pick a week and opponent. Every scheduled game is projected by the ML model, lineup limits are applied day by day, and it shows win probability per category and overall plus the expected category record. Tap a player to see the game-by-game matchup factors. |
 | **League** | Every team's projected strength (expected categories won per week against the league, win %, category ranks). It also finds trade targets, 1-for-1 and 2-for-2 trades that help you without gutting the other team, and waiver pickups, ranked by categories you choose to target or give up. You can also get the best offers for one player you want, or shop up to three of your own around the league. The stat basis is switchable: current-season averages (falling back to last season until a player has 5 games), the blended projection, or last season. Its roster editor keeps every team current the way Yahoo does: a free agent joining a full roster means picking someone to drop (IL spots open up for injured players), and a player on another team comes over in a 1-for-1 trade. |
+| **Trade** | Trade Analyzer. Pick two teams and add players on both sides (even or uneven). It shows each player's per-game stats (2025-26 averages, the projection, or 2026-27 so far) and, for each team, how the trade changes its expected categories won, matchup win %, league rank, roster size and every category. |
 | **Stream** | Plans this week's add/drops within your remaining adds. It either chases chosen categories or maximizes your chance of beating this week's opponent, respects "next-day" add rules, and only counts games where an open lineup slot exists. |
 | **Settings** | Your leagues (add, open, delete), then the open league's format, roster slots, weekly add limit and team names, a planning date, the model's accuracy report, and your account. |
 
@@ -177,6 +178,10 @@ leagues in the browser (localStorage).
   in his sheet.
 - **Fantasy weeks** are Monday–Sunday, with week 1 starting on opening night. Yahoo
   sometimes merges weeks (e.g. around the All-Star break); pick the weeks you need.
+- **Unsigned players** (on no current roster) who played 500+ minutes last season stay in the player
+  pool under the team they last played for, marked Unsigned, so they can still be drafted or added.
+  Run `npm run data` after they sign to move them to their new team. The Stream tab leaves them out,
+  since they can't play this week's games.
 - **Injuries** use basketball-reference's injury notes, which lag real news. Override
   a player's status or availability in his sheet.
 - **Depth-chart changes** from offseason moves are only reflected once games are played.

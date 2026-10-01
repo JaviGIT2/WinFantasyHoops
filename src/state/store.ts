@@ -30,6 +30,11 @@ export interface AppState extends SavedState {
   addPlayer: (team: number, pid: string, drop?: string) => void;
   /** 1-for-1 trade: `team` gets `get` from the team that has him and sends back `give`. */
   tradePlayers: (team: number, get: string, give: string) => void;
+  /**
+   * Trade between teams `a` and `b`, any number of players each way, then cut `drops` (from either team, incoming
+   * players included) to free agency. Ignored unless every traded player is on the team sending him.
+   */
+  processTrade: (a: number, b: number, aSends: string[], bSends: string[], drops: string[]) => void;
   removeFromRoster: (team: number, pid: string) => void;
   setOpponent: (week: number, team: number) => void;
   updateStream: (patch: Partial<StreamSettings>) => void;
@@ -173,6 +178,25 @@ export const useStore = create<AppState>()(
               ),
               stream: { ...l.stream, droppable: l.stream.droppable.filter((x) => x !== give) },
             };
+          }),
+        ),
+
+      processTrade: (a, b, aSends, bSends, drops) =>
+        set((s) =>
+          editOpen(s, (l) => {
+            const [ra, rb] = [l.rosters[a], l.rosters[b]];
+            if (a === b || !ra || !rb || aSends.length + bSends.length === 0) return null;
+            if (!aSends.every((id) => ra.includes(id)) || !bSends.every((id) => rb.includes(id))) return null;
+            const kept = (ids: string[]) => ids.filter((id) => !drops.includes(id));
+            const rosters = l.rosters.map((r, i) =>
+              i === a
+                ? kept([...r.filter((id) => !aSends.includes(id)), ...bSends])
+                : i === b
+                  ? kept([...r.filter((id) => !bSends.includes(id)), ...aSends])
+                  : r,
+            );
+            const mine = rosters[l.settings.myTeam] ?? [];
+            return { rosters, stream: { ...l.stream, droppable: l.stream.droppable.filter((id) => mine.includes(id)) } };
           }),
         ),
 

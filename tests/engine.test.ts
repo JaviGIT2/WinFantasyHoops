@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { CATEGORIES, FORMAT_PRESETS } from '../src/engine/categories';
-import { createContext } from '../src/engine/context';
+import { applyCategoryEdits, CATEGORIES, FORMAT_PRESETS } from '../src/engine/categories';
+import { createContext, withProjectionEdits } from '../src/engine/context';
 import { fitLinear, fitPoisson } from '../src/engine/glm';
-import { findTrades, leagueReport, offersAway, offersFor, strategyWeights, type CatWeights } from '../src/engine/league';
+import { findTrades, leagueReport, offersAway, offersFor, strategyWeights, tradeImpact, type CatWeights } from '../src/engine/league';
 import { bestLineup, DEFAULT_SLOTS, expandSlots, hungarian, type Slot } from '../src/engine/lineup';
 import { catDist, catOdds, compareAggs, matchupOdds, projectWeek, valueWeights } from '../src/engine/matchup';
 import { gaussian, normCdf, rng } from '../src/engine/mathx';
 import { predictGame } from '../src/engine/model';
-import { playerRates, seasonProjection } from '../src/engine/projection';
+import { availability, playerRates, seasonProjection } from '../src/engine/projection';
 import { buildScheduleIndex, fantasyWeeks } from '../src/engine/schedule';
 import { planStreams } from '../src/engine/streaming';
 import { computeZ, teamStrength, weightedValue } from '../src/engine/zscore';
-import { perGame } from '../src/engine/stats';
+import { perGame, zeroLine } from '../src/engine/stats';
 import type { Pos } from '../src/data/types';
 import { makeBundle } from './fixtures';
 
@@ -353,6 +353,90 @@ describe('weekly projection, league and streaming', () => {
     const ptsOnly = strategyWeights([], cats.filter((c) => c !== 'PTS'));
     for (const t of offersFor(ctx, rosters, 0, fa, cats, 'last', { weights: ptsOnly }).offers) expect(t.myDelta).toBeCloseTo(t.catDelta.PTS, 9);
     expect(offersFor(ctx, rosters, 0, rosters[0][0], cats, 'last')).toEqual({ partner: 0, offers: [] });
+  });
+
+  it('breaks each team down by category and rates any trade before and after', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD'].map((t) => bundle.players.filter((p) => p.team === t));
+    const rep = leagueReport(ctx, rosters, cats, 'last');
+    for (const r of rep) {
+      // Per-category expected wins add up to the overall expected categories won.
+      expect(cats.reduce((s, c) => s + r.catWins[c], 0)).toBeCloseTo(r.power, 9);
+      for (const c of cats) expect(r.values[c]).toBeCloseTo(catDist(r.agg, CATEGORIES[c]).mean, 9);
+    }
+
+    // Uneven trade: team 0 sends two players, team 2 sends one.
+    const send0 = [rosters[0][1].id, rosters[0][5].id];
+    const send2 = [rosters[2][3].id];
+    const { before, after, rosters: moved } = tradeImpact(ctx, rosters, 0, 2, send0, send2, cats, 'last');
+    expect(before).toEqual(rep);
+    const ids = (r: typeof rosters[number]) => r.map((p) => p.id).sort();
+    expect(ids(moved[0])).toEqual([...rosters[0].map((p) => p.id).filter((id) => !send0.includes(id)), ...send2].sort());
+    expect(ids(moved[2])).toEqual([...rosters[2].map((p) => p.id).filter((id) => !send2.includes(id)), ...send0].sort());
+    expect(moved[1]).toBe(rosters[1]);
+    expect(moved[3]).toBe(rosters[3]);
+    expect(after[0].power).not.toBeCloseTo(before[0].power, 6);
+    expect(after.map((r) => r.ranks.PTS).sort()).toEqual([1, 2, 3, 4]);
+
+    // Nobody moving (or players who aren't on the sending team) changes nothing.
+    expect(tradeImpact(ctx, rosters, 0, 2, [], [], cats, 'last').after).toEqual(rep);
+    expect(tradeImpact(ctx, rosters, 0, 2, [rosters[1][0].id], [], cats, 'last').after).toEqual(rep);
+
+    // Team 2 got the extra player; it drops one (an incoming player is fine), and only the two traders can drop.
+    const drops = [send0[0], rosters[1][2].id];
+    const cut = tradeImpact(ctx, rosters, 0, 2, send0, send2, cats, 'last', drops);
+    expect(cut.traded).toEqual(moved);
+    expect(ids(cut.rosters[2])).toEqual(ids(moved[2]).filter((id) => id !== send0[0]));
+    expect(cut.rosters[1]).toBe(rosters[1]);
+    expect(cut.rosters[0]).toEqual(cut.traded[0]);
+    expect(cut.after[2].power).not.toBeCloseTo(after[2].power, 6);
+    expect(cut.after[2]).toEqual(leagueReport(ctx, cut.rosters, cats, 'last')[2]);
+  });
+
+  it('turns typed-in category values into a consistent projected line', () => {
+    const base = { ...zeroLine(), min: 30, pts: 15, reb: 5, ast: 4, to: 2, fgm: 6, fga: 13, ftm: 2, fta: 2.5, tpm: 1, tpa: 3 };
+    const cats9 = FORMAT_PRESETS[0].cats;
+    const cats11 = FORMAT_PRESETS.find((f) => f.id === '11cat')!.cats;
+    expect(applyCategoryEdits(base, { PTS: 20 }, cats9)).toEqual({ ...base, pts: 20 });
+    // More made threes keep his 3P%: attempts scale with them.
+    const threes = applyCategoryEdits(base, { '3PM': 2 }, cats9);
+    expect([threes.tpm, threes.tpa]).toEqual([2, 6]);
+    // A percentage moves the makes...
+    const fg = applyCategoryEdits(base, { 'FG%': 0.5 }, cats9);
+    expect([fg.fgm, fg.fga]).toEqual([6.5, 13]);
+    // ...or the attempts, when the makes are a category too (11-cat has 3PM and 3P%), so both edits stand.
+    const both = applyCategoryEdits(base, { '3PM': 2, '3P%': 0.4 }, cats11);
+    expect(both.tpm).toBe(2);
+    expect(both.tpa).toBeCloseTo(5, 12);
+    // A center projected for no threes gets attempts at the league rate.
+    expect(applyCategoryEdits({ ...base, tpm: 0, tpa: 0 }, { '3PM': 0.5 }, cats9, { tpa: 0.25 }).tpa).toBe(2);
+    // A/T follows AST and TO; it can't be set on its own.
+    expect(applyCategoryEdits(base, { 'A/T': 5 }, cats11)).toEqual(base);
+    expect(base.pts).toBe(15);
+  });
+
+  it('applies projection edits only in the context that carries them, moving the trade by exactly the edit', () => {
+    const cats = FORMAT_PRESETS[0].cats;
+    const { bundle } = makeBundle();
+    const ctx = createContext(bundle, {}, '2026-10-01');
+    const p = bundle.players[3];
+    const plain = seasonProjection(ctx, p).perGame;
+    const edited = withProjectionEdits(ctx, { [p.id]: { pts: plain.pts + 5 } });
+    expect(seasonProjection(edited, p).perGame).toEqual({ ...plain, pts: plain.pts + 5 });
+    expect(seasonProjection(ctx, p).perGame.pts).toBe(plain.pts);
+    expect(withProjectionEdits(ctx, {})).toBe(ctx);
+
+    // He goes from team 0 to team 1: five more points a game is 5 × 3.5 games × his availability a week, wherever he is.
+    const rosters = ['AAA', 'BBB', 'CCC', 'DDD'].map((t) => bundle.players.filter((q) => q.team === t));
+    const plainTrade = tradeImpact(ctx, rosters, 0, 1, [p.id], [], cats, 'proj');
+    const editTrade = tradeImpact(edited, rosters, 0, 1, [p.id], [], cats, 'proj');
+    const weekly = 5 * 3.5 * availability(ctx, p);
+    expect(editTrade.before[0].values.PTS - plainTrade.before[0].values.PTS).toBeCloseTo(weekly, 9);
+    expect(editTrade.after[1].values.PTS - plainTrade.after[1].values.PTS).toBeCloseTo(weekly, 9);
+    expect(editTrade.after[0].values.PTS).toBeCloseTo(plainTrade.after[0].values.PTS, 9);
+    expect(editTrade.before[1].values.PTS).toBeCloseTo(plainTrade.before[1].values.PTS, 9);
   });
 
   it('shops players of mine around the league', () => {
